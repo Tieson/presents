@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vánoční dárek</title>
+<meta name="description" content="Rozbal si svůj vánoční dárek.">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#05140e">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400;0,6..96,600;1,6..96,400;1,6..96,500&family=Jost:wght@300;400;500&display=swap">
+<link rel="stylesheet" href="assets/base.css">
+<link rel="stylesheet" href="assets/wrap.css">
+<link rel="stylesheet" href="assets/gift.css">
+</head>
+<body>
+<canvas id="fx" aria-hidden="true"></canvas>
+
+<main class="stage">
+  <header class="intro">
+    <p class="eyebrow ruled" id="eyebrow">Štědrý večer</p>
+    <h1><span class="line">Šťastné a veselé</span><em class="foil">Vánoce</em></h1>
+    <p class="lede" id="lede">Pod stromečkem na tebe něco čeká. Rozbal si svůj dárek.</p>
+  </header>
+
+  <section class="present" id="present" aria-label="Zabalený dárek">
+    <button class="gift breathe" id="gift" type="button" aria-label="Zabalený dárek">
+      <span class="gift-shadow"></span>
+      <span class="base">
+        <span class="ribbon-v"></span>
+        <span class="ribbon-h"></span>
+        <span class="seal" aria-hidden="true">V</span>
+      </span>
+      <span class="lid">
+        <span class="lid-body"></span>
+        <span class="ribbon-v"></span>
+        <span class="bow" aria-hidden="true">
+          <span class="tail l"></span><span class="tail r"></span>
+          <span class="loop l"></span><span class="loop r"></span>
+          <span class="knot"></span>
+        </span>
+      </span>
+    </button>
+
+    <span class="string" aria-hidden="true"></span>
+
+    <!-- The tag changes with state: code entry, loading, locked countdown, password, open button -->
+    <div class="tag" id="tag">
+      <div class="tag-inner">
+
+        <form id="codeForm" class="tag-state" autocomplete="off" novalidate hidden>
+          <label for="codeInput" class="tag-title">Kód dárku</label>
+          <p class="tag-note">Najdeš ho v odkazu nebo na přáníčku. Třeba <span class="mono">bekalo-mitusa</span>.</p>
+          <input id="codeInput" class="tag-input mono" type="text" inputmode="latin" placeholder="xxxxxx-xxxxxx" spellcheck="false" autocapitalize="off" maxlength="20">
+          <button class="btn" type="submit">Najít dárek</button>
+        </form>
+
+        <div id="loadingState" class="tag-state loading">
+          <span class="spinner" aria-hidden="true"></span>
+          <p class="tag-note">Hledám tvůj dárek…</p>
+        </div>
+
+        <div id="lockedState" class="tag-state" hidden>
+          <p class="tag-title" id="lockedTitle">Ještě chvilku strpení</p>
+          <p class="tag-note">Rozbalit půjde <strong id="lockedWhen"></strong>.</p>
+          <div class="countdown-grid" id="countdown" aria-live="off">
+            <div><b data-u="d">0</b><span data-l="d">dní</span></div>
+            <div><b data-u="h">00</b><span>hodin</span></div>
+            <div><b data-u="m">00</b><span>minut</span></div>
+            <div><b data-u="s">00</b><span>sekund</span></div>
+          </div>
+        </div>
+
+        <form id="openForm" class="tag-state" autocomplete="off" novalidate hidden>
+          <p class="tag-title" id="openTitle">Heslo pro dárek</p>
+          <div id="pwWrap" class="pw-wrap">
+            <label for="pwInput" class="visually-hidden">Heslo pro dárek</label>
+            <p class="tag-note">Ježíšek ti ho pošeptal. Napiš ho sem.</p>
+            <input id="pwInput" class="tag-input" type="text" placeholder="tvoje heslo" spellcheck="false" autocapitalize="off" autocomplete="off">
+          </div>
+          <button class="btn" type="submit" id="openBtn">Rozbalit dárek</button>
+        </form>
+
+        <p class="msg" id="msg" role="status" aria-live="polite"></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="reveal" id="reveal" hidden aria-live="polite"></section>
+
+  <p class="footline" id="footline"></p>
+</main>
+
+<script src="assets/common.js"></script>
+<script src="assets/wrap.js"></script>
+<script src="assets/fx.js"></script>
+<script src="assets/gift.js"></script>
+</body>
+</html>

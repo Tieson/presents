@@ -1,0 +1,35 @@
+Options -Indexes
+DirectoryIndex index.html
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # API → api.php
+  RewriteRule ^api/(.*)$ api.php?path=$1 [QSA,L]
+
+  # Administrace
+  RewriteRule ^admin/?$ admin.html [L]
+
+  # Data a konfigurace nikdy ven
+  RewriteRule ^(data|config\.php|config\.sample\.php) - [F,L]
+
+  # Kód dárku v adrese (/bekalo-mitusa) → stránka příjemce
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^[a-zA-Z-]{12,16}/?$ index.html [L]
+</IfModule>
+
+<FilesMatch "^(config\.php|config\.sample\.php)$">
+  Require all denied
+</FilesMatch>
+
+<IfModule mod_headers.c>
+  Header set X-Content-Type-Options "nosniff"
+  Header set Referrer-Policy "same-origin"
+</IfModule>
+
+# Větší PDF (funguje jen tam, kde hosting povoluje php_value v .htaccess)
+<IfModule mod_php.c>
+  php_value upload_max_filesize 16M
+  php_value post_max_size 16M
+</IfModule>

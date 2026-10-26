@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ježíškova dílna</title>
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#05140e">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400;0,6..96,600;1,6..96,400;1,6..96,500&family=DM+Mono:wght@400;500&family=Jost:wght@300;400;500&display=swap">
+<link rel="stylesheet" href="assets/base.css">
+<link rel="stylesheet" href="assets/wrap.css">
+<link rel="stylesheet" href="assets/admin.css">
+</head>
+<body class="admin">
+<canvas id="fx" data-density=".3" aria-hidden="true"></canvas>
+
+<!-- ============ LOGIN ============ -->
+<main id="login" class="login" hidden>
+  <form id="loginForm" class="login-card" novalidate>
+    <span class="monogram" aria-hidden="true"></span>
+    <p class="eyebrow ruled">Vánoční dárky</p>
+    <h1>Ježíškova <em class="foil">dílna</em></h1>
+    <p class="login-note">Tady se balí dárky. Zadej heslo do dílny.</p>
+    <label for="loginPw" class="visually-hidden">Heslo do dílny</label>
+    <input id="loginPw" class="login-input" type="password" autocomplete="current-password" placeholder="heslo do dílny">
+    <button class="btn" type="submit" id="loginBtn">Vstoupit</button>
+    <p class="login-msg" id="loginMsg" role="status" aria-live="polite"></p>
+  </form>
+</main>
+
+<!-- ============ APP ============ -->
+<div id="app" class="app" hidden>
+  <header class="topbar">
+    <a class="brand" href="admin" aria-label="Ježíškova dílna">
+      <span class="monogram small" aria-hidden="true"></span>
+      <span class="brand-text">
+        <span class="brand-name">Ježíškova <em>dílna</em></span>
+        <span class="brand-sub">Vánoční dárky · správa</span>
+      </span>
+    </a>
+    <div class="top-actions">
+      <button class="btn gold small" type="button" id="newGift">
+        <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
+        Nový box
+      </button>
+      <button class="top-link" type="button" id="logout">Odhlásit</button>
+    </div>
+  </header>
+
+  <div class="layout" id="layout">
+    <!-- shelf: list of boxes -->
+    <aside class="shelf" aria-label="Dárkové boxy">
+      <div class="shelf-head">
+        <p class="eyebrow">Pod stromečkem</p>
+        <span class="shelf-count" id="shelfCount"></span>
+      </div>
+      <ul class="gift-list" id="giftList"></ul>
+      <div class="shelf-empty" id="shelfEmpty" hidden>
+        <p>Pod stromečkem je zatím prázdno.</p>
+        <button class="btn small" type="button" id="newGiftEmpty">Zabalit první dárek</button>
+      </div>
+    </aside>
+
+    <!-- editor -->
+    <section class="desk" aria-label="Úprava boxu">
+      <div class="sheet sheet-empty" id="emptyEditor">
+        <span class="monogram" aria-hidden="true"></span>
+        <h2>Vyber box ze seznamu</h2>
+        <p>Nebo založ nový. Každý box má vlastní adresu, heslo a čas, kdy ho jde rozbalit.</p>
+      </div>
+
+      <form class="sheet" id="editor" novalidate hidden>
+        <button type="button" class="back-link" id="backToList">← Všechny boxy</button>
+
+        <div class="sheet-head">
+          <div class="title-field">
+            <label for="fTitle" class="label">Název boxu</label>
+            <input id="fTitle" class="title-input" type="text" maxlength="120" placeholder="Dárek pro sestřičku" autocomplete="off">
+            <label class="toggle">
+              <input type="checkbox" id="fShowTitle">
+              <span class="switch" aria-hidden="true"></span>
+              <span>Příjemce uvidí název boxu</span>
+            </label>
+          </div>
+          <span class="pill" id="statusPill"></span>
+        </div>
+
+        <!-- address -->
+        <section class="block">
+          <header class="block-head">
+            <h3>Adresa dárku</h3>
+            <p>Podle kódu příjemce dárek najde. Je složený ze slabik, aby se dal snadno přečíst a opsat.</p>
+          </header>
+          <div class="address">
+            <div class="code-big mono" id="codeBig"></div>
+            <div class="url-line mono" id="urlLine"></div>
+            <div class="chips">
+              <button type="button" class="chip" id="copyLink">Kopírovat odkaz</button>
+              <button type="button" class="chip" id="copyCode">Kopírovat kód</button>
+              <a class="chip" id="previewLink" href="#" target="_blank" rel="noopener">Náhled jako příjemce ↗</a>
+              <button type="button" class="chip quiet" id="regenCode">Nový kód</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- appearance -->
+        <section class="block">
+          <header class="block-head">
+            <h3>Vzhled krabice</h3>
+            <p>Takhle bude dárek vypadat, než ho příjemce rozbalí. Stejně vypadají i malé krabičky při postupném rozbalování.</p>
+          </header>
+          <div class="look">
+            <div class="look-stage" id="lookStage">
+              <button type="button" class="gift" id="lookGift" aria-label="Přehrát rozbalení"></button>
+              <button type="button" class="look-play" id="lookPlay">Přehrát rozbalení</button>
+            </div>
+            <div class="look-controls">
+              <div class="picker">
+                <span class="label">Papír <em id="paperName"></em></span>
+                <div class="swatches" id="paperPicker" role="radiogroup" aria-label="Barva papíru"></div>
+              </div>
+              <div class="picker">
+                <span class="label">Vzor <em id="patternName"></em></span>
+                <div class="swatches tiles" id="patternPicker" role="radiogroup" aria-label="Vzor papíru"></div>
+              </div>
+              <div class="picker">
+                <span class="label">Stuha <em id="ribbonName"></em></span>
+                <div class="swatches" id="ribbonPicker" role="radiogroup" aria-label="Barva stuhy"></div>
+              </div>
+              <div class="picker-row">
+                <div class="picker">
+                  <span class="label">Převázání</span>
+                  <div class="segmented" id="stylePicker" role="radiogroup" aria-label="Převázání stuhou"></div>
+                </div>
+                <div class="picker">
+                  <label class="label" for="fSeal">Pečeť</label>
+                  <input id="fSeal" class="input seal-input" type="text" maxlength="2" placeholder="—" autocomplete="off" spellcheck="false">
+                </div>
+              </div>
+              <p class="hint">Do pečeti napiš jedno nebo dvě písmena, třeba iniciály. Prázdné pole = bez pečeti.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- password -->
+        <section class="block">
+          <header class="block-head">
+            <h3>Heslo</h3>
+            <p>Na velikosti písmen ani na diakritice nezáleží, „Vánoce“ otevře i „vanoce“.</p>
+          </header>
+          <label class="toggle">
+            <input type="checkbox" id="fPwOn">
+            <span class="switch" aria-hidden="true"></span>
+            <span>Chránit dárek heslem</span>
+          </label>
+          <div class="pw-area" id="pwArea">
+            <div class="pw-set" id="pwSet">
+              <span class="pw-dot" aria-hidden="true"></span>
+              <span>Heslo je nastavené</span>
+              <button type="button" class="chip" id="pwChange">Změnit heslo</button>
+            </div>
+            <div class="field" id="pwEdit">
+              <label for="fPw" class="label">Nové heslo</label>
+              <input id="fPw" class="input" type="text" autocomplete="off" spellcheck="false" placeholder="např. stromecek">
+              <p class="hint">Server heslo ukládá jen jako otisk. Po uložení ho uvidíš tady, dokud stránku neobnovíš.</p>
+            </div>
+            <div class="pw-fresh" id="pwFresh" hidden>
+              <span>Heslo pro příjemce</span>
+              <b class="mono" id="pwFreshVal"></b>
+              <button type="button" class="chip" id="copyPw">Kopírovat</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- unlock -->
+        <section class="block">
+          <header class="block-head">
+            <h3>Kdy půjde rozbalit</h3>
+            <p>Čas hlídá server, takže ho příjemce neobejde posunutím hodin v telefonu.</p>
+          </header>
+          <div class="when-cards" role="radiogroup" aria-label="Kdy půjde rozbalit">
+            <label class="when-card">
+              <input type="radio" name="when" value="christmas">
+              <span class="wc-title">Na Štědrý večer</span>
+              <span class="wc-sub" id="xmasLabel">24. 12. v 18:00</span>
+            </label>
+            <label class="when-card">
+              <input type="radio" name="when" value="custom">
+              <span class="wc-title">Vlastní čas</span>
+              <span class="wc-sub">Slavíte jindy? Nastav datum a hodinu.</span>
+            </label>
+            <label class="when-card">
+              <input type="radio" name="when" value="anytime">
+              <span class="wc-title">Kdykoli</span>
+              <span class="wc-sub">I před Štědrým dnem</span>
+            </label>
+          </div>
+          <div class="field inline" id="customWhen">
+            <label for="fOpenAt" class="label">Odemknout od</label>
+            <input id="fOpenAt" class="input" type="datetime-local">
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="fManual">
+            <span class="switch" aria-hidden="true"></span>
+            <span>Odemknout ručně hned teď</span>
+          </label>
+          <p class="hint">Přebije nastavený čas. Hodí se, když se rozbaluje dřív, než jste plánovali.</p>
+          <p class="when-status" id="whenStatus"></p>
+        </section>
+
+        <!-- message -->
+        <section class="block">
+          <header class="block-head">
+            <h3>Přáníčko</h3>
+            <p>Zobrazí se po rozbalení nad položkami.</p>
+          </header>
+          <div class="field">
+            <label for="fMessage" class="label">Vzkaz</label>
+            <textarea id="fMessage" class="input" rows="4" maxlength="4000" placeholder="Ať jsou letošní Vánoce plné klidu a vůně cukroví…"></textarea>
+          </div>
+          <div class="field">
+            <label for="fSignature" class="label">Podpis</label>
+            <input id="fSignature" class="input" type="text" maxlength="200" placeholder="S láskou, Tom">
+          </div>
+        </section>
+
+        <!-- reveal mode -->
+        <section class="block">
+          <header class="block-head">
+            <h3>Rozbalování</h3>
+            <p>Jak se obsah boxu ukáže po otevření.</p>
+          </header>
+          <div class="when-cards" id="revealCards" role="radiogroup" aria-label="Způsob rozbalení">
+            <label class="when-card">
+              <input type="radio" name="reveal" value="all">
+              <span class="wc-title">Najednou</span>
+              <span class="wc-sub">Po otevření boxu se ukážou všechny položky.</span>
+            </label>
+            <label class="when-card">
+              <input type="radio" name="reveal" value="sequential">
+              <span class="wc-title">Postupně</span>
+              <span class="wc-sub">Každá položka je malá krabička. Rozbalují se jedna po druhé.</span>
+            </label>
+            <label class="when-card">
+              <input type="radio" name="reveal" value="choice">
+              <span class="wc-title">Ať vybere příjemce</span>
+              <span class="wc-sub">Po otevření si příjemce zvolí, jestli chce všechno hned, nebo postupně.</span>
+            </label>
+          </div>
+        </section>
+
+        <!-- items -->
+        <section class="block">
+          <header class="block-head">
+            <h3>Položky dárku <span class="count" id="itemCount"></span></h3>
+            <p>Příjemce je uvidí vždy, i když název boxu skryješ. Pořadí změníš přetažením za úchyt nebo šipkami.</p>
+          </header>
+          <ol class="item-list" id="items"></ol>
+          <button type="button" class="add-item" id="addItem">
+            <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
+            Přidat položku
+          </button>
+        </section>
+
+        <section class="block block-danger">
+          <button type="button" class="danger-link" id="deleteGift">Smazat tento box</button>
+          <span class="meta-line" id="metaLine"></span>
+        </section>
+      </form>
+    </section>
+  </div>
+
+  <div class="savebar" id="savebar" hidden>
+    <span class="save-state" id="saveState">Vše uloženo</span>
+    <button type="button" class="top-link" id="discard" disabled>Zahodit</button>
+    <button type="button" class="btn small gold" id="save" disabled>Uložit změny</button>
+  </div>
+</div>
+
+<dialog class="dlg" id="dlg">
+  <form method="dialog" class="dlg-card">
+    <h2 id="dlgTitle"></h2>
+    <p id="dlgText"></p>
+    <div class="dlg-actions">
+      <button class="top-link dark" value="cancel" id="dlgCancel">Zpět</button>
+      <button class="btn small" value="ok" id="dlgOk">Potvrdit</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<template id="itemTpl">
+  <li class="item">
+    <button type="button" class="grip" aria-label="Přesunout položku. Šipkami nahoru a dolů změníš pořadí.">
+      <svg width="12" height="18" viewBox="0 0 12 18" aria-hidden="true"><g fill="currentColor"><circle cx="3" cy="3" r="1.5"/><circle cx="9" cy="3" r="1.5"/><circle cx="3" cy="9" r="1.5"/><circle cx="9" cy="9" r="1.5"/><circle cx="3" cy="15" r="1.5"/><circle cx="9" cy="15" r="1.5"/></g></svg>
+    </button>
+    <span class="item-num"></span>
+    <div class="item-body">
+      <input class="item-name" type="text" maxlength="160" placeholder="Název položky, např. Poukaz na masáž" aria-label="Název položky">
+      <textarea class="item-desc" rows="2" maxlength="4000" placeholder="Popis, třeba kde a do kdy poukaz platí" aria-label="Popis položky"></textarea>
+      <div class="file-slot"></div>
+    </div>
+    <div class="item-tools">
+      <button type="button" class="tool up" aria-label="Posunout výš">
+        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 8l4-4 4 4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+      </button>
+      <button type="button" class="tool down" aria-label="Posunout níž">
+        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+      </button>
+      <button type="button" class="tool remove" aria-label="Odebrat položku">
+        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+      </button>
+    </div>
+  </li>
+</template>
+
+<script src="assets/common.js"></script>
+<script src="assets/wrap.js"></script>
+<script src="assets/fx.js"></script>
+<script src="assets/admin.js"></script>
+</body>
+</html>
