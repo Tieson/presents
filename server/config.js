@@ -13,6 +13,12 @@ export function getApp() {
   const redisToken = env.UPSTASH_REDIS_REST_TOKEN || env.KV_REST_API_TOKEN;
   const useCloud = env.STORAGE === "vercel" || (env.STORAGE !== "fs" && redisUrl && redisToken);
 
+  if (env.VERCEL && !useCloud) {
+    throw new Error("Na Vercelu chybí úložiště: připoj Upstash for Redis (Storage → Marketplace) a proveď Redeploy.");
+  }
+  if (!env.ADMIN_PASSWORD) {
+    throw new Error("Chybí proměnná ADMIN_PASSWORD (heslo do dílny).");
+  }
   const storage = useCloud
     ? vercelStorage({ redisUrl, redisToken, blobToken: env.BLOB_READ_WRITE_TOKEN, blobAccess: env.BLOB_ACCESS || "private" })
     : fsStorage(path.resolve(env.DATA_DIR || "./data"));

@@ -1,3 +1,7 @@
+import "./common.js";
+import "./wrap.js";
+import "./fx.js";
+
 /* Recipient page */
 (function () {
   const { api, normalizePassword, normalizeCode, formatLong, plural, formatSize, esc, store } = window.XD;

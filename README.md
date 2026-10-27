@@ -18,58 +18,72 @@ zadá heslo a ve stanovený čas si dárek „rozbalí“. Tvůrce vše spravuje
 ## Struktura
 
 ```
-web/      společný frontend (index.html = příjemce, admin.html = dílna, assets/)
-node/     Node.js backend – samostatný server i Vercel funkce
-php/      PHP backend se stejným API (PHP 7.4+, Apache + mod_rewrite)
-build.mjs sestaví dist/node a dist/php
-API.md    popis API a datového modelu
+web/                 frontend (Vite): index.html = příjemce, admin.html = dílna, assets/
+api/index.js         Vercel serverless funkce – vstup pro celé /api/*
+server/              Node backend: app.js (API), security.js, storage/ (fs | Upstash+Blob),
+                     standalone.js (vlastní server), node-adapter.js, env.js
+php/                 PHP backend se stejným API (PHP 7.4+, Apache + mod_rewrite)
+scripts/             build-php.mjs, test.mjs
+tests/api.mjs        end-to-end testy API (běží proti Node i PHP)
+vite.config.js       build + dev server s API
+vercel.json          nastavení Vercelu (build, přepisy adres, hlavičky)
 ```
 
-Data jsou mezi backendy přenositelná (stejný JSON i formát hashů hesel).
+| Příkaz | Co dělá |
+|---|---|
+| `npm run dev` | Vite na http://localhost:5173 i s API (data do `./data`, heslo z `.env`, jinak `admin`) |
+| `npm run build` | frontend do `dist/` (to nasazuje Vercel) |
+| `npm run build:php` | hotová složka `build/php/` pro PHP hosting |
+| `npm start` | samostatný Node server nad `dist/` (VPS, Docker) |
+| `npm test` | testy API proti Node backendu; `npm test -- <url> <heslo>` proti libovolnému běžícímu backendu |
 
-```bash
-node build.mjs     # → dist/node, dist/php
-```
+Data jsou mezi backendy přenositelná (stejný JSON i formát hashů hesel). Popis API je v `API.md`.
 
 ---
 
-## Nasazení na Vercel
+## Vercel (hlavní nasazení, automaticky z repa)
 
-1. Nahraj repozitář na GitHub a ve Vercelu vytvoř projekt.
-   **Root Directory** nastav na `node` (build si sám zkopíruje `web/` do `public/`).
-2. V záložce **Storage** připoj:
-   - **Upstash for Redis** (Marketplace). Doplní `UPSTASH_REDIS_REST_URL` a `UPSTASH_REDIS_REST_TOKEN`, případně `KV_REST_API_*`. Oboje funguje.
-   - **Blob** a zvol **Private** úložiště. Doplní `BLOB_READ_WRITE_TOKEN`.
-3. V **Environment Variables** přidej:
+Jednorázové nastavení:
+
+1. Ve Vercelu **Add New → Project** a importuj tenhle repozitář. Root Directory nech prázdné (kořen), framework se načte z `vercel.json` (Vite).
+2. **Storage → Create / Connect**:
+   - **Upstash for Redis** (Marketplace). Doplní `KV_REST_API_URL` a `KV_REST_API_TOKEN` (nebo `UPSTASH_REDIS_REST_*`). Fungují obě varianty.
+   - **Blob** a zvol **Private**. Doplní `BLOB_READ_WRITE_TOKEN`.
+3. **Settings → Environment Variables**:
    - `ADMIN_PASSWORD` = heslo do dílny
    - `APP_SECRET` = dlouhý náhodný řetězec (`openssl rand -base64 32`)
-4. Deploy. Dílna běží na `https://<projekt>.vercel.app/admin`.
+4. Spusť **Redeploy**, aby se proměnné načetly.
 
-Alternativně bez gitu: `node build.mjs && cd dist/node && npx vercel --prod`.
+Pak už každý push do `main` nasadí produkci a každá jiná větev nebo PR dostane náhledovou adresu.
+Dílna běží na `https://<projekt>.vercel.app/admin`.
 
-> Vercel funkce přijmou požadavek do ~4,5 MB, proto je tam limit PDF **4 MB** (`MAX_UPLOAD_MB`).
-> Jestli máš veřejné Blob úložiště, nastav `BLOB_ACCESS=public`. Soubory se i tak posílají jen přes API, URL blobu se nikam nedostane.
+> **Limit PDF na Vercelu je 4 MB.** Víc Vercel funkce v jednom požadavku nepřijme. Změní se proměnnou `MAX_UPLOAD_MB`, ale nad ~4,5 MB to nepomůže.
+> Při veřejném Blob úložišti nastav `BLOB_ACCESS=public`. Soubory se i tak posílají jen přes API, adresa blobu se nikam nedostane.
 
-## Node.js server (VPS, Docker, lokálně)
+## PHP hosting (ruční nasazení)
 
 ```bash
-cd dist/node
-cp .env.example .env    # vyplň ADMIN_PASSWORD (a APP_SECRET)
-npm install
-npm start               # http://localhost:3000, dílna na /admin
+npm ci
+npm run build:php        # → build/php/
 ```
 
-Data se ukládají do `./data` (`DATA_DIR`). Za reverzní proxy (nginx/Caddy) posílej `X-Forwarded-Proto`, aby cookie dostala příznak `Secure`.
-
-## PHP hosting (Wedos, Forpsi, Active24…)
-
-1. `node build.mjs` a obsah `dist/php/` nahraj přes FTP do webroot (nebo podsložky).
-2. Zkopíruj `config.sample.php` → `config.php` a vyplň `ADMIN_PASSWORD` a `APP_SECRET`.
+1. Obsah `build/php/` (včetně `.htaccess`) nahraj přes FTP do webrootu nebo podsložky.
+2. Na serveru zkopíruj `config.sample.php` → `config.php` a vyplň `ADMIN_PASSWORD` a `APP_SECRET`.
 3. Ideálně nastav `DATA_DIR` mimo veřejný webroot. Když zůstane uvnitř, chrání ho `.htaccess`.
-4. Hosting musí mít zapnutý `mod_rewrite` (běžně ano). PHP rozšíření: `json`, `mbstring`, `hash` (standard).
-5. U větších PDF zkontroluj `upload_max_filesize` a `post_max_size` v PHP.
+4. Hosting musí mít zapnutý `mod_rewrite` (běžně ano) a PHP 7.4 nebo novější s `json`, `mbstring`, `hash`.
+5. U větších PDF zkontroluj `upload_max_filesize` a `post_max_size`.
 
-Lokální test: `cd dist/php && php -S localhost:8000 router.php`.
+Lokální zkouška: `cd build/php && php -S localhost:8000 router.php`.
+
+## Vlastní Node server (VPS, Docker)
+
+```bash
+cp .env.example .env     # vyplň ADMIN_PASSWORD a APP_SECRET
+npm ci && npm run build
+npm start                # http://localhost:3000, data v ./data
+```
+
+Za reverzní proxy (nginx, Caddy) posílej `X-Forwarded-Proto`, aby cookie dostala příznak `Secure`.
 
 ## Bezpečnost v kostce
 
@@ -77,3 +91,4 @@ Lokální test: `cd dist/php && php -S localhost:8000 router.php`.
 - Hesla k dárkům: PBKDF2-SHA256, 210 000 iterací. Špatný pokus server zdrží o 0,6 s.
 - Kód má 12 písmen ze 70 slabik, tedy zhruba 10¹¹ kombinací. Dárek bez hesla je chráněný jen tímhle kódem.
 - Při změně hesla nebo kódu přestanou platit dřív vydané odkazy na PDF.
+- Postupné rozbalování hlídá jen stránka. Server po otevření pošle všechny položky naráz.

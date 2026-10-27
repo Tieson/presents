@@ -1,0 +1,27 @@
+{
+  "name": "vanocni-darky",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Vánoční dárkové boxy s online poukazy – Vercel / Node.js, volitelně PHP",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:php": "node scripts/build-php.mjs",
+    "preview": "npm run build && npm start",
+    "start": "node server/standalone.js",
+    "test": "node scripts/test.mjs"
+  },
+  "dependencies": {
+    "@vercel/blob": "2.8.2"
+  },
+  "devDependencies": {
+    "vite": "^8.3.4"
+  },
+  "overrides": {
+    "zod": "^4.6.6"
+  }
+}

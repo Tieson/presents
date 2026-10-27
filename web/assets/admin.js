@@ -1,3 +1,7 @@
+import "./common.js";
+import "./wrap.js";
+import "./fx.js";
+
 /* Ježíškova dílna – admin */
 (function () {
   const { api: rawApi, normalizePassword, formatShort, formatWithYear, relative, plural, formatSize, esc, copy, appBase } = window.XD;
