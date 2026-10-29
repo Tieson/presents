@@ -19,6 +19,8 @@ import "./fx.js";
     pinned = h; width = w;
     root.style.setProperty("--vh", `${h}px`);
     root.classList.toggle("short", h < 700);
+    // phone on its side: wider than tall and low → side-by-side layout with a squeezed heading
+    root.classList.toggle("land", w > h && h < 540);
     window.dispatchEvent(new CustomEvent("xd:vh", { detail: h }));
   }
   update(true);
@@ -71,7 +73,7 @@ import "./fx.js";
   function fit() {
     if (present.hidden || opened) return;
     const vh = window.XDvh?.() || innerHeight;
-    const wide = innerWidth >= 860;
+    const wide = innerWidth >= 860 || document.documentElement.classList.contains("land");
     const w = gift.getBoundingClientRect().width;
     const free = scene.clientHeight - present.offsetHeight;          // > 0: room left in the scene
     const over = Math.max(0, stage.offsetHeight - vh);                // > 0: stage taller than the screen
@@ -79,7 +81,8 @@ import "./fx.js";
     // in the side-by-side layout only the part of the present taller than the tag counts
     const growable = wide ? Math.max(0, slotH - tag.offsetHeight) + Math.max(0, free) : free;
     const delta = ((over > 0 ? -over : growable) - 3) / 1.24;      // 3px spare for rounding
-    const maxW = wide ? 330 : Math.min(270, innerWidth * .62);
+    const land = document.documentElement.classList.contains("land");
+    const maxW = land ? 250 : wide ? 330 : Math.min(270, innerWidth * .62);
     const next = Math.max(96, Math.min(maxW, w + delta));
     if (Math.abs(next - w) > 2 || over > 0) stage.style.setProperty("--wbase", `${next.toFixed(1)}px`);
   }
