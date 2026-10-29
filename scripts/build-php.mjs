@@ -19,5 +19,5 @@ for (const f of fs.readdirSync(path.join(root, "php"))) {
 console.log(`
 ✔ build/php je připravený k nahrání na hosting.
   1. Nahraj obsah složky build/php (včetně .htaccess) přes FTP.
-  2. Na serveru zkopíruj config.sample.php → config.php a vyplň ADMIN_PASSWORD a APP_SECRET.
+  2. Na serveru zkopíruj config.sample.php → config.php a vyplň APP_SECRET (případně SIGNUP_CODE).
 `);
