@@ -1,36 +1,52 @@
-/* Recipient page: one centered stage. Wrapped present + paper tag; the right password lifts the lid and a gold-edged card rises in its place. */
-:root { --w: min(270px, 66vw); }
+/* Recipient page. Layout: the first screen is a "stage" exactly one viewport tall – heading + the present
+   (and its tag), later the surprise being unwrapped. Everything else (the list) sits below it and peeks in. */
 
-.stage {
+.page {
   position: relative; z-index: 2;
-  max-width: 640px;
-  margin: 0 auto;
-  padding-block: clamp(32px, 7vh, 72px) 48px;
   display: flex; flex-direction: column; align-items: center;
-  gap: clamp(26px, 5vh, 42px);
   text-align: center;
 }
 
-.intro { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+/* --wbase: present size that fits the screen height together with heading and tag */
+.stage {
+  --chrome: 470px;
+  --wbase: clamp(104px, min(60vw, calc((100svh - var(--chrome)) / 1.3)), 270px);
+  width: 100%;
+  max-width: 1100px;
+  min-height: 100vh;
+  min-height: 100svh;
+  padding-block: clamp(12px, 3svh, 40px) clamp(8px, 2svh, 22px);
+  display: flex; flex-direction: column; align-items: center;
+  gap: clamp(6px, 1.8svh, 22px);
+}
+.stage.with-peek { min-height: calc(100vh - 34px); min-height: calc(100svh - 34px); }
+.stage.compact { min-height: 0; }
+
+.intro { display: flex; flex-direction: column; align-items: center; gap: clamp(4px, 1.2svh, 12px); }
 h1 {
   margin: 0;
   font-family: var(--f-display);
   font-weight: 400;
-  font-size: clamp(38px, 9vw, 68px);
+  font-size: clamp(28px, min(8.6vw, 5.2svh), 60px);
   line-height: 1.02;
   letter-spacing: -.01em;
   text-wrap: balance;
 }
 h1 .line { display: block; color: var(--cream); }
-h1 em { display: block; font-style: italic; font-weight: 500; font-size: 1.32em; padding-bottom: .06em; }
-.lede { margin: 0; max-width: 34ch; color: var(--muted); font-size: 17px; text-wrap: balance; }
-.lede strong { color: var(--gold-light); font-weight: 400; font-family: var(--f-display); font-style: italic; font-size: 1.15em; }
+h1 em { display: block; font-style: italic; font-weight: 500; font-size: 1.3em; padding-bottom: .06em; }
+.lede { margin: 0; max-width: 36ch; color: var(--muted); font-size: clamp(14px, 2svh, 17px); line-height: 1.5; text-wrap: balance; }
+.lede strong { color: var(--gold-light); font-weight: 400; font-family: var(--f-display); font-style: italic; font-size: 1.2em; }
 
-/* ---------- present ---------- */
-.present { display: flex; flex-direction: column; align-items: center; width: 100%; }
+/* scene = the rest of the screen; content centered in it */
+.scene { flex: 1 1 auto; width: 100%; display: grid; place-items: center; min-height: 0; }
+.scene > * { grid-area: 1 / 1; }
+
+/* ---------- present + tag ---------- */
+.present { --w: var(--wbase); display: flex; flex-direction: column; align-items: center; width: 100%; }
+.gift-slot { display: grid; place-items: center; }
 
 /* ---------- tag ---------- */
-.string { width: 1px; height: 46px; background: linear-gradient(var(--gold), rgba(214,178,106,.4)); margin-top: 18px; }
+.string { width: 1px; height: clamp(14px, 3svh, 40px); background: linear-gradient(var(--gold), rgba(214,178,106,.4)); margin-top: clamp(10px, 2svh, 18px); flex: none; }
 .tag {
   position: relative;
   width: min(350px, 100%);
@@ -54,10 +70,10 @@ h1 em { display: block; font-style: italic; font-weight: 500; font-size: 1.32em;
   border: 1px solid rgba(140,106,44,.45); border-radius: 3px;
   pointer-events: none; clip-path: inherit;
 }
-.tag-inner { position: relative; z-index: 1; padding: 36px 26px 20px; display: flex; flex-direction: column; gap: 6px; }
-.tag-state { display: flex; flex-direction: column; gap: 12px; }
+.tag-inner { position: relative; z-index: 1; padding: clamp(28px, 4svh, 36px) 24px clamp(10px, 2svh, 18px); display: flex; flex-direction: column; gap: 6px; }
+.tag-state { display: flex; flex-direction: column; gap: clamp(8px, 1.4svh, 12px); }
 .tag-state.loading { align-items: center; padding: 18px 0 4px; color: var(--ink-soft); }
-.tag-title { margin: 0; font-family: var(--f-display); font-style: italic; font-size: 24px; line-height: 1.15; text-wrap: balance; }
+.tag-title { margin: 0; font-family: var(--f-display); font-style: italic; font-size: clamp(20px, 3svh, 24px); line-height: 1.15; text-wrap: balance; }
 .tag-note { margin: -4px 0 0; font-size: 14px; color: var(--ink-soft); text-wrap: balance; }
 .tag-note strong { color: var(--ink); font-weight: 500; }
 .tag-input {
@@ -74,7 +90,7 @@ h1 em { display: block; font-style: italic; font-weight: 500; font-size: 1.32em;
 .mono { font-family: var(--f-mono); }
 .tag-input.mono { font-size: 17px; letter-spacing: .06em; }
 .pw-wrap { display: flex; flex-direction: column; gap: 12px; }
-.msg { margin: 6px 0 0; min-height: 1.4em; font-size: 14px; color: var(--burgundy); text-wrap: balance; }
+.msg { margin: 2px 0 0; min-height: 1.4em; font-size: 14px; color: var(--burgundy); text-wrap: balance; }
 
 .countdown-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 4px; }
 .countdown-grid div {
@@ -94,13 +110,65 @@ h1 em { display: block; font-style: italic; font-weight: 500; font-size: 1.32em;
   40%, 60% { transform: rotate(-1.2deg) translateX(7px); }
 }
 
+
 /* ---------- opening sequence ---------- */
-.present.opening .tag, .present.opening .string { opacity: 0; transform: translateY(20px) rotate(4deg); }
+.present.opening .tag, .present.opening .string { opacity: 0; transform: translateY(20px) rotate(4deg); pointer-events: none; }
 .present.gone { opacity: 0; transform: scale(.94); transition: opacity .5s ease, transform .5s ease; }
 
-/* ---------- reveal card ---------- */
-.reveal { width: min(580px, 100%); animation: rise 1s cubic-bezier(.2,.7,.25,1) both; }
+/* ---------- the unwrap scene (after the big box is open) ---------- */
+.unwrap {
+  --w: calc(var(--wbase) * .92);
+  width: min(560px, 100%);
+  display: flex; flex-direction: column; align-items: center;
+  gap: clamp(8px, 1.8svh, 16px);
+}
+.unwrap .gift.wait { animation: breathe 3.6s ease-in-out infinite; }
+.step-label { margin: 0; font-size: 12px; letter-spacing: .26em; text-transform: uppercase; color: var(--gold); }
+.step-label b { font-family: var(--f-display); font-weight: 400; font-style: italic; font-size: 19px; letter-spacing: 0; text-transform: none; color: var(--gold-light); font-variant-numeric: lining-nums; }
+.step-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+
+/* the surprise just unwrapped, shown on the stage */
+.surprise {
+  width: 100%;
+  padding: clamp(22px, 4svh, 40px) clamp(18px, 5vw, 40px);
+  display: flex; flex-direction: column; align-items: center; gap: clamp(8px, 1.6svh, 14px);
+  background:
+    radial-gradient(100% 70% at 50% 0%, rgba(214,178,106,.16), transparent 70%),
+    linear-gradient(180deg, var(--velvet-2), #0a2219);
+  border: 1px solid var(--gold);
+  box-shadow: 0 0 0 5px var(--velvet-deep), 0 0 0 6px rgba(214,178,106,.45), 0 30px 60px -20px rgba(0,0,0,.8);
+  animation: pop .7s cubic-bezier(.2,.8,.25,1.05) both;
+}
+@keyframes pop { from { opacity: 0; transform: translateY(18px) scale(.9); } to { opacity: 1; transform: none; } }
+.surprise .s-name {
+  margin: 0;
+  font-family: var(--f-display); font-weight: 400;
+  font-size: clamp(26px, min(7vw, 4.6svh), 42px); line-height: 1.1;
+  color: var(--gold-light); text-wrap: balance; overflow-wrap: anywhere;
+}
+.surprise .s-desc { margin: 0; max-width: 40ch; color: var(--cream); font-size: 16px; white-space: pre-line; overflow-wrap: anywhere; }
+.surprise .actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+.surprise .file-meta { font-size: 12px; color: var(--muted); align-self: center; }
+.surprise .sign { margin: 0; }
+
+/* hint at the bottom of the stage that more is below */
+.peek {
+  appearance: none; background: none; border: 0; cursor: pointer;
+  margin-top: auto;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 10px 14px 0;
+  font: 400 12px/1 var(--f-body); letter-spacing: .24em; text-transform: uppercase;
+  color: var(--gold);
+}
+.peek svg { animation: nudge 1.8s ease-in-out infinite; }
+@keyframes nudge { 0%,100% { transform: translateY(0); } 50% { transform: translateY(4px); } }
+.peek:hover { color: var(--gold-light); }
+.peek:focus-visible { outline: 1px solid var(--gold); outline-offset: 4px; }
+
+/* ---------- list card below the stage ---------- */
+.reveal { width: min(600px, 100%); padding-bottom: 8px; animation: rise .9s cubic-bezier(.2,.7,.25,1) both; scroll-margin-top: 16px; }
 @keyframes rise { from { opacity: 0; transform: translateY(40px) scale(.97); } to { opacity: 1; transform: none; } }
+.reveal-empty { margin: 0; font-size: 15px; color: var(--muted); }
 
 .preview-banner {
   margin: 0 0 18px;
@@ -161,18 +229,15 @@ h1 em { display: block; font-style: italic; font-weight: 500; font-size: 1.32em;
 .link-btn:hover { color: var(--gold-light); border-bottom-color: var(--gold); }
 .link-btn:focus-visible { outline: 1px solid var(--gold); outline-offset: 4px; }
 
-.footline { margin: 8px 0 0; font-size: 12px; letter-spacing: .24em; text-transform: uppercase; color: var(--muted); }
+
+.items li.seen { animation: none; opacity: 1; }
+.items li.flash { animation: itemIn .6s ease forwards, glow 1.6s ease .2s; }
+@keyframes glow { 0% { background: rgba(214,178,106,.18); } 100% { background: transparent; } }
+
+.footline { margin: 28px 0 32px; font-size: 12px; letter-spacing: .24em; text-transform: uppercase; color: var(--muted); }
 .footline b { font-family: var(--f-display); font-weight: 400; font-style: italic; font-size: 20px; letter-spacing: 0; text-transform: none; color: var(--gold-light); font-variant-numeric: tabular-nums; }
 
-@media (max-width: 380px) {
-  .countdown-grid b { font-size: 22px; }
-  .items .actions .btn { flex: 1 1 auto; }
-}
-
-/* ---------- reveal modes ---------- */
-.items-area { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 22px; }
-.items li.seen { animation: none; opacity: 1; }
-
+/* ---------- choice ---------- */
 .choice { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 6px 0 4px; }
 .choice-q { margin: 0; font-family: var(--f-display); font-style: italic; font-size: 22px; color: var(--cream); }
 .choice-opts { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
@@ -190,15 +255,40 @@ h1 em { display: block; font-style: italic; font-weight: 500; font-size: 1.32em;
 .choice-opt b { font-family: var(--f-display); font-weight: 400; font-size: 20px; color: var(--gold-light); }
 .choice-opt span { font-size: 14px; color: var(--muted); line-height: 1.45; }
 
-.next-gift { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 4px 0 6px; }
-.next-gift .gift { --w: 118px; margin-top: calc(var(--w) * .26); }
-.next-gift .gift.wait { animation: breathe 3.6s ease-in-out infinite; }
-.next-label { margin: 6px 0 0; font-size: 12px; letter-spacing: .26em; text-transform: uppercase; color: var(--gold); }
-.next-label b { font-family: var(--f-display); font-weight: 400; font-style: italic; font-size: 18px; letter-spacing: 0; text-transform: none; color: var(--gold-light); font-variant-numeric: lining-nums; }
 .seq-dots { display: flex; gap: 8px; }
 .seq-dots i { width: 7px; height: 7px; transform: rotate(45deg); border: 1px solid var(--gold); }
 .seq-dots i.on { background: var(--gold); }
 
+
+/* ---------- responsive ---------- */
+@media (max-width: 380px) {
+  .countdown-grid b { font-size: 22px; }
+  .items .actions .btn, .surprise .actions .btn { flex: 1 1 auto; }
+}
 @media (max-width: 480px) {
   .choice-opts { grid-template-columns: minmax(0, 1fr); }
+}
+/* short phones: tighter heading */
+@media (max-height: 700px) and (max-width: 859px) {
+  .stage { --chrome: 430px; }
+  .eyebrow.ruled { display: none; }
+  h1 em { font-size: 1.15em; }
+}
+/* wide screens: tag hangs beside the present instead of under it */
+@media (min-width: 860px) {
+  .stage { --chrome: 320px; --wbase: clamp(170px, calc((100svh - var(--chrome)) / 1.3), 330px); }
+  .unwrap { --w: calc(var(--wbase) * .78); }
+  .present { flex-direction: row; justify-content: center; align-items: center; gap: 0; }
+  .string { width: clamp(40px, 6vw, 90px); height: 1px; margin: 0 0 0 calc(var(--w) * .12); background: linear-gradient(90deg, var(--gold), rgba(214,178,106,.4)); }
+  .tag { width: 340px; transform: rotate(1.5deg); }
+  .shake { animation-name: shake-wide; }
+  @keyframes shake-wide {
+    10%, 90% { transform: rotate(1.5deg) translateX(-2px); }
+    20%, 80% { transform: rotate(1.5deg) translateX(4px); }
+    30%, 50%, 70% { transform: rotate(1.5deg) translateX(-7px); }
+    40%, 60% { transform: rotate(1.5deg) translateX(7px); }
+  }
+  .present.opening .tag, .present.opening .string { transform: translateX(30px) rotate(6deg); }
+  .unwrap { width: min(620px, 100%); }
+  .unwrap:has(.surprise) { width: min(680px, 100%); }
 }

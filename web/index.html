@@ -18,14 +18,18 @@
 <body>
 <canvas id="fx" aria-hidden="true"></canvas>
 
-<main class="stage">
+<main class="page">
+<!-- The stage is exactly one screen tall: heading + the present (or the current surprise). -->
+<section class="stage" id="stage">
   <header class="intro">
     <p class="eyebrow ruled" id="eyebrow">Štědrý večer</p>
     <h1><span class="line">Šťastné a veselé</span><em class="foil">Vánoce</em></h1>
     <p class="lede" id="lede">Pod stromečkem na tebe něco čeká. Rozbal si svůj dárek.</p>
   </header>
 
+  <div class="scene" id="scene">
   <section class="present" id="present" aria-label="Zabalený dárek">
+    <div class="gift-slot">
     <button class="gift breathe" id="gift" type="button" aria-label="Zabalený dárek">
       <span class="gift-shadow"></span>
       <span class="base">
@@ -43,6 +47,7 @@
         </span>
       </span>
     </button>
+    </div>
 
     <span class="string" aria-hidden="true"></span>
 
@@ -88,9 +93,19 @@
     </div>
   </section>
 
-  <section class="reveal" id="reveal" hidden aria-live="polite"></section>
+  <!-- After the big box opens: chooser, the next small box, or the surprise just unwrapped -->
+  <section class="unwrap" id="unwrap" hidden aria-live="polite"></section>
+  </div>
 
-  <p class="footline" id="footline"></p>
+  <button class="peek" id="peek" type="button" hidden>
+    <span id="peekText">Tvoje překvapení</span>
+    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 5l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+  </button>
+</section>
+
+<section class="reveal" id="reveal" hidden></section>
+
+<p class="footline" id="footline"></p>
 </main>
 
 <script type="module" src="./assets/gift.js"></script>

@@ -9,7 +9,8 @@ import "./fx.js";
   const $ = id => document.getElementById(id);
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  const present = $("present"), gift = $("gift"), tag = $("tag"), msg = $("msg"), reveal = $("reveal");
+  const stage = $("stage"), present = $("present"), gift = $("gift"), tag = $("tag"), msg = $("msg");
+  const unwrap = $("unwrap"), peek = $("peek"), reveal = $("reveal");
   const states = { code: $("codeForm"), loading: $("loadingState"), locked: $("lockedState"), open: $("openForm") };
 
   const params = new URLSearchParams(location.search);
@@ -163,128 +164,49 @@ import "./fx.js";
     }
   });
 
-  /* ---------- the opened card ---------- */
-  let opened = null; // { g, token, mode }
+  /* ---------- after opening ----------
+     mode "all":        stage shrinks to the heading, the list card follows right under it
+     mode "sequential": the stage shows one small box at a time → the surprise it held → next box…,
+                        the list of what's been unwrapped sits below the stage and peeks in
+     mode "choice":     the stage first asks which of the two the recipient wants            */
+  let opened = null;      // { g, token, preview, mode, view: "box" | "item" | "done" }
+  let unwrapping = false;
 
-  function itemHtml(it, i, { delay = 0, seen = false } = {}) {
-    const g = opened.g, token = opened.token;
-    const fileUrl = dl => `api/gifts/${encodeURIComponent(g.code)}/items/${encodeURIComponent(it.id)}/file?t=${encodeURIComponent(token)}${dl ? "&dl=1" : ""}`;
-    return `<li class="${seen ? "seen" : ""}" data-i="${i}" style="${seen ? "" : `animation-delay:${delay}s`}">
+  const total = () => opened.g.items.length;
+  const revealed = () => Math.min(total(), Math.max(0, Number(store(key("n"))) || 0));
+  const toTop = (smooth = true) => scrollTo({ top: 0, behavior: smooth && !reduce ? "smooth" : "auto" });
+
+  function fileUrl(it, dl) {
+    const g = opened.g;
+    return `api/gifts/${encodeURIComponent(g.code)}/items/${encodeURIComponent(it.id)}/file?t=${encodeURIComponent(opened.token)}${dl ? "&dl=1" : ""}`;
+  }
+  function fileActions(it) {
+    if (!it.file) return "";
+    return `<span class="actions">
+      <a class="btn small gold" href="${fileUrl(it, false)}" target="_blank" rel="noopener">Otevřít poukaz</a>
+      <a class="btn small ghost" href="${fileUrl(it, true)}">Stáhnout PDF</a>
+      <span class="file-meta">${esc(formatSize(it.file.size))}</span>
+    </span>`;
+  }
+  function itemHtml(it, i, { delay = 0, cls = "" } = {}) {
+    return `<li class="${cls}" data-i="${i}" style="${cls === "seen" ? "" : `animation-delay:${delay}s`}">
       <span class="num" aria-hidden="true">${i + 1}</span>
       <span class="name">${esc(it.name || "Překvapení")}</span>
       ${it.description ? `<span class="desc">${esc(it.description)}</span>` : ""}
-      ${it.file ? `<span class="actions">
-        <a class="btn small gold" href="${fileUrl(false)}" target="_blank" rel="noopener">Otevřít poukaz</a>
-        <a class="btn small ghost" href="${fileUrl(true)}">Stáhnout PDF</a>
-        <span class="file-meta">${esc(formatSize(it.file.size))}</span>
-      </span>` : ""}
+      ${fileActions(it)}
     </li>`;
   }
-
-  function renderCard(g, token, isPreview) {
-    const chosen = store(key("m"));
-    opened = { g, token, mode: g.reveal === "choice" ? (chosen === "all" || chosen === "sequential" ? chosen : null) : (g.reveal || "all") };
-    reveal.innerHTML = `
-      ${isPreview ? `<p class="preview-banner">Náhled pro tvůrce. Příjemce uvidí totéž až po zadání hesla a v nastavený čas.</p>` : ""}
-      <article class="card">
-        <p class="eyebrow">${g.title ? "Rozbaleno" : "Tvůj dárek"}</p>
-        <h2>${esc(g.title || "Veselé Vánoce")}</h2>
-        <div class="ornament" aria-hidden="true">✦</div>
-        ${g.message ? `<p class="note">${esc(g.message)}</p>` : ""}
-        <div class="items-area" id="itemsArea"></div>
-        ${g.signature ? `<p class="sign" id="sign">${esc(g.signature)}</p>` : ""}
-        <button class="link-btn" id="rewrap" type="button">Zabalit znovu</button>
-      </article>`;
-    $("rewrap").addEventListener("click", () => {
-      store(key("n"), null); store(key("m"), null);
-      resetView(); showOpen();
-      present.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "center" });
-    });
-    renderItemsArea();
-  }
-
-  function renderItemsArea(fresh = -1) {
-    const { g, mode } = opened;
-    const area = $("itemsArea");
-    const total = g.items.length;
-    const sign = $("sign");
-
-    if (!total) { area.innerHTML = ""; if (sign) sign.hidden = false; return; }
-
-    if (!mode) {
-      if (sign) sign.hidden = true;
-      area.innerHTML = `<div class="choice">
-        <p class="choice-q">Uvnitř ${plural(total, "je", "jsou", "je")} ${total} ${plural(total, "překvapení", "překvapení", "překvapení")}. Jak je chceš rozbalit?</p>
-        <div class="choice-opts">
-          <button type="button" class="choice-opt" data-mode="all"><b>Všechno najednou</b><span>Ukáže se celý obsah boxu hned.</span></button>
-          <button type="button" class="choice-opt" data-mode="sequential"><b>Postupně</b><span>Jedno překvapení po druhém, každé ve vlastní krabičce.</span></button>
-        </div>
-      </div>`;
-      area.querySelectorAll(".choice-opt").forEach(b => b.addEventListener("click", () => {
-        opened.mode = b.dataset.mode;
-        store(key("m"), opened.mode);
-        renderItemsArea();
-      }));
-      return;
-    }
-
-    if (mode === "all") {
-      area.innerHTML = `<ol class="items">${g.items.map((it, i) => itemHtml(it, i, { delay: .45 + i * .16 })).join("")}</ol>`;
-      if (sign) sign.hidden = false;
-      return;
-    }
-
-    // sequential
-    let n = Math.min(total, Math.max(0, Number(store(key("n"))) || 0));
-    const done = n >= total;
-    area.innerHTML = `
-      ${n ? `<ol class="items">${g.items.slice(0, n).map((it, i) => itemHtml(it, i, { seen: i !== fresh, delay: .1 })).join("")}</ol>` : ""}
-      ${done ? "" : `<div class="next-gift">
-        <button type="button" class="gift wait" id="miniGift" aria-label="Rozbalit další překvapení">${W.markup()}</button>
-        <p class="next-label">Překvapení <b>${n + 1}</b> z <b>${total}</b></p>
-        <div class="seq-dots" aria-hidden="true">${g.items.map((_, i) => `<i class="${i < n ? "on" : ""}"></i>`).join("")}</div>
-        <button type="button" class="btn" id="nextBtn">${n ? "Rozbalit další" : "Rozbalit první"}</button>
-      </div>`}`;
-    if (sign) sign.hidden = !done;
-
-    if (!done) {
-      const mini = $("miniGift");
-      W.apply(mini, meta?.appearance || g.appearance);
-      const go = () => unwrapNext(mini);
-      mini.addEventListener("click", go);
-      $("nextBtn").addEventListener("click", go);
-    }
-    if (fresh >= 0) {
-      const li = area.querySelector(`li[data-i="${fresh}"]`);
-      li?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "center" });
-    }
-  }
-
-  let unwrapping = false;
-  function unwrapNext(mini) {
-    if (unwrapping) return;
-    unwrapping = true;
-    const n = Math.min(opened.g.items.length, (Number(store(key("n"))) || 0) + 1);
-    const finish = () => {
-      store(key("n"), String(n));
-      unwrapping = false;
-      renderItemsArea(n - 1);
-    };
-    if (reduce) { finish(); return; }
-    $("nextBtn").disabled = true;
-    mini.classList.remove("wait");
-    mini.classList.add("wiggle");
-    setTimeout(() => {
-      mini.classList.add("lifted");
-      const r = mini.getBoundingClientRect();
-      window.XDfx?.burst(r.left + r.width / 2, r.top + r.height * .3, 90);
-    }, 650);
-    setTimeout(finish, 1300);
-  }
+  const dotsHtml = n => `<div class="seq-dots" aria-hidden="true">${opened.g.items.map((_, i) => `<i class="${i < n ? "on" : ""}"></i>`).join("")}</div>`;
 
   function openSequence(g, token, isPreview) {
-    renderCard(g, token, isPreview);
-    if (reduce) { present.hidden = true; reveal.hidden = false; busy = false; return; }
+    const chosen = store(key("m"));
+    opened = {
+      g, token, preview: isPreview,
+      mode: g.reveal === "choice" ? (chosen === "all" || chosen === "sequential" ? chosen : null) : (g.reveal || "all"),
+      view: "box"
+    };
+    if (reduce) { present.hidden = true; enterOpened(); busy = false; return; }
+    toTop();                                   // the present must be on screen for the effect
     present.classList.add("opening");
     gift.classList.remove("breathe");
     gift.classList.add("wiggle");
@@ -294,17 +216,159 @@ import "./fx.js";
       window.XDfx?.burst(r.left + r.width / 2, r.top + r.height * .3);
     }, 900);
     setTimeout(() => present.classList.add("gone"), 1700);
+    setTimeout(() => { present.hidden = true; enterOpened(); busy = false; }, 2200);
+  }
+
+  function enterOpened() {
+    renderCard();
+    reveal.hidden = false;
+    if (!total() || opened.mode === "all") {
+      stage.classList.add("compact");
+      stage.classList.remove("with-peek");
+      unwrap.hidden = true;
+      peek.hidden = true;
+      toTop(false);
+      return;
+    }
+    stage.classList.add("with-peek");
+    unwrap.hidden = false;
+    peek.hidden = false;
+    opened.view = revealed() >= total() ? "done" : "box";
+    renderStage();
+  }
+
+  /* the list card below the stage */
+  function renderCard(fresh = -1) {
+    const g = opened.g, mode = opened.mode, n = revealed();
+    const all = mode === "all" || !total();
+    const shown = all ? g.items : g.items.slice(0, n);
+    const done = all || n >= total();
+    reveal.innerHTML = `
+      ${opened.preview ? `<p class="preview-banner">Náhled pro tvůrce. Příjemce uvidí totéž až po zadání hesla a v nastavený čas.</p>` : ""}
+      <article class="card">
+        <p class="eyebrow">${all ? (g.title ? "Rozbaleno" : "Tvůj dárek") : mode ? `Rozbaleno ${n} z ${total()}` : "Tvůj dárek"}</p>
+        <h2>${esc(g.title || "Veselé Vánoce")}</h2>
+        <div class="ornament" aria-hidden="true">✦</div>
+        ${g.message ? `<p class="note">${esc(g.message)}</p>` : ""}
+        ${shown.length
+          ? `<ol class="items">${shown.map((it, i) => itemHtml(it, i, all ? { delay: .45 + i * .16 } : { cls: i === fresh ? "flash" : "seen" })).join("")}</ol>`
+          : (mode ? `<p class="reveal-empty">Zatím nic. Rozbal první krabičku nahoře.</p>` : "")}
+        ${g.signature && done && mode ? `<p class="sign">${esc(g.signature)}</p>` : ""}
+        <button class="link-btn" id="rewrap" type="button">Zabalit znovu</button>
+      </article>`;
+    $("rewrap").addEventListener("click", rewrap);
+  }
+
+  /* the stage after opening */
+  function renderStage() {
+    const g = opened.g, n = revealed(), t = total();
+    if (!opened.mode) {
+      $("peekText").textContent = "Tvoje překvapení";
+      unwrap.innerHTML = `<div class="choice">
+        <p class="choice-q">Uvnitř ${plural(t, "je", "jsou", "je")} ${t} překvapení. Jak je chceš rozbalit?</p>
+        <div class="choice-opts">
+          <button type="button" class="choice-opt" data-mode="all"><b>Všechno najednou</b><span>Ukáže se celý obsah boxu hned.</span></button>
+          <button type="button" class="choice-opt" data-mode="sequential"><b>Postupně</b><span>Jedno překvapení po druhém, každé ve vlastní krabičce.</span></button>
+        </div>
+      </div>`;
+      unwrap.querySelectorAll(".choice-opt").forEach(b => b.addEventListener("click", () => {
+        opened.mode = b.dataset.mode;
+        store(key("m"), opened.mode);
+        enterOpened();
+      }));
+      return;
+    }
+
+    $("peekText").textContent = n ? `Rozbaleno ${n} z ${t}` : "Tvoje překvapení";
+
+    if (opened.view === "box") {
+      unwrap.innerHTML = `
+        <button type="button" class="gift wait" id="miniGift" aria-label="Rozbalit překvapení ${n + 1} z ${t}">${W.markup()}</button>
+        <p class="step-label">Překvapení <b>${n + 1}</b> z <b>${t}</b></p>
+        ${dotsHtml(n)}
+        <div class="step-actions"><button type="button" class="btn" id="stepBtn">${n ? "Rozbalit další" : "Rozbalit první"}</button></div>`;
+      const mini = $("miniGift");
+      W.apply(mini, meta?.appearance || g.appearance);
+      mini.addEventListener("click", () => unwrapNext(mini));
+      $("stepBtn").addEventListener("click", () => unwrapNext(mini));
+      return;
+    }
+
+    if (opened.view === "item") {
+      const it = g.items[n - 1];
+      unwrap.innerHTML = `
+        <article class="surprise">
+          <p class="step-label">Překvapení <b>${n}</b> z <b>${t}</b></p>
+          <h2 class="s-name">${esc(it.name || "Překvapení")}</h2>
+          ${it.description ? `<p class="s-desc">${esc(it.description)}</p>` : ""}
+          ${fileActions(it)}
+        </article>
+        ${dotsHtml(n)}
+        <div class="step-actions"><button type="button" class="btn" id="stepBtn">${n < t ? "Další překvapení" : "Dokončit"}</button></div>`;
+      $("stepBtn").addEventListener("click", () => {
+        opened.view = n < t ? "box" : "done";
+        renderStage();
+        if (opened.view === "done") renderCard();
+      });
+      $("stepBtn").focus({ preventScroll: true });
+      return;
+    }
+
+    // done
+    unwrap.innerHTML = `
+      <article class="surprise">
+        <p class="step-label">Rozbaleno <b>${t}</b> z <b>${t}</b></p>
+        <h2 class="s-name">Všechno je rozbalené</h2>
+        <p class="s-desc">Všechna překvapení najdeš pohromadě v seznamu níž.</p>
+        ${g.signature ? `<p class="sign">${esc(g.signature)}</p>` : ""}
+      </article>
+      <div class="step-actions"><button type="button" class="btn ghost" id="stepBtn">Ukázat seznam</button></div>`;
+    $("stepBtn").addEventListener("click", showList);
+  }
+
+  function unwrapNext(mini) {
+    if (unwrapping) return;
+    unwrapping = true;
+    const n = Math.min(total(), revealed() + 1);
+    const finish = () => {
+      store(key("n"), String(n));
+      unwrapping = false;
+      opened.view = "item";
+      renderStage();
+      renderCard(n - 1);
+    };
+    // keep the box on screen for the effect
+    if (stage.getBoundingClientRect().top < -4) toTop();
+    if (reduce) { finish(); return; }
+    $("stepBtn").disabled = true;
+    mini.classList.remove("wait");
+    mini.classList.add("wiggle");
     setTimeout(() => {
-      present.hidden = true;
-      reveal.hidden = false;
-      reveal.scrollIntoView({ behavior: "smooth", block: "start" });
-      busy = false;
-    }, 2200);
+      mini.classList.add("lifted");
+      const r = mini.getBoundingClientRect();
+      window.XDfx?.burst(r.left + r.width / 2, r.top + r.height * .3, 110);
+    }, 650);
+    setTimeout(finish, 1350);
+  }
+
+  function showList() {
+    reveal.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+  }
+  peek.addEventListener("click", showList);
+
+  function rewrap() {
+    store(key("n"), null); store(key("m"), null);
+    resetView(); showOpen();
+    toTop();
   }
 
   function resetView() {
     reveal.hidden = true;
     reveal.innerHTML = "";
+    unwrap.hidden = true;
+    unwrap.innerHTML = "";
+    peek.hidden = true;
+    stage.classList.remove("compact", "with-peek");
     opened = null;
     present.classList.remove("opening", "gone");
     gift.classList.remove("wiggle", "lifted");
