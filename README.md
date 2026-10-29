@@ -50,6 +50,7 @@ Jednorázové nastavení:
 2. **Storage → Create / Connect**:
    - **Upstash for Redis** (Marketplace). Doplní `KV_REST_API_URL` a `KV_REST_API_TOKEN` (nebo `UPSTASH_REDIS_REST_*`). Fungují obě varianty.
    - **Blob** a zvol **Private**. Doplní `BLOB_READ_WRITE_TOKEN`.
+   - **Sdílená databáze nebo prefix proměnných:** když integraci dáš prefix (např. `present` → `present_KV_REST_API_URL`), aplikace proměnné najde sama. `STORAGE_ENV_PREFIX=present` je potřeba jen tehdy, když je v projektu připojených víc Redis databází. Všechny klíče v Redisu začínají na `xd:`, takže se s jiným projektem nepotkají. Jiný začátek jde nastavit přes `REDIS_KEY_PREFIX`.
 3. **Settings → Environment Variables**:
    - `APP_SECRET` = dlouhý náhodný řetězec (`openssl rand -base64 32`), povinný
    - volitelně `SIGNUP_CODE`, pokud nechceš, aby si dílnu mohl založit kdokoli
