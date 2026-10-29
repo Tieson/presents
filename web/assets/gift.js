@@ -2,6 +2,32 @@ import "./common.js";
 import "./wrap.js";
 import "./fx.js";
 
+/* Screen height for the one-screen layout.
+   Pinned to the real window height on load and on rotation / browser-bar changes.
+   When the on-screen keyboard opens (a text field has focus and the window got
+   shorter) the value is kept, so nothing shrinks while typing. */
+(function pinViewportHeight() {
+  const root = document.documentElement;
+  let pinned = 0, width = 0;
+  window.XDvh = () => pinned;
+  const typing = () => document.activeElement?.matches?.("input, textarea, [contenteditable]");
+  function update(force) {
+    const h = window.innerHeight, w = window.innerWidth;
+    const rotated = w !== width;
+    if (!force && !rotated && h < pinned && typing()) return;   // keyboard: keep the old height
+    if (!force && !rotated && Math.abs(h - pinned) < 2) return;
+    pinned = h; width = w;
+    root.style.setProperty("--vh", `${h}px`);
+    root.classList.toggle("short", h < 700);
+    window.dispatchEvent(new CustomEvent("xd:vh", { detail: h }));
+  }
+  update(true);
+  addEventListener("resize", () => update(false));
+  addEventListener("orientationchange", () => setTimeout(() => update(true), 250));
+  // after the keyboard closes the field may still have focus – grow back when it blurs
+  document.addEventListener("focusout", () => setTimeout(() => update(false), 300));
+})();
+
 /* Recipient page */
 (function () {
   const { api, normalizePassword, normalizeCode, formatLong, plural, formatSize, esc, store } = window.XD;
@@ -28,6 +54,41 @@ import "./fx.js";
 
   function show(name) {
     for (const [k, el] of Object.entries(states)) el.hidden = k !== name;
+    scheduleFit();
+  }
+
+  /* ---------- size the present so heading + present + tag + footline fill exactly one screen ----------
+     CSS gives a first guess; here we measure what the texts really take (they wrap differently
+     on every phone) and give the present whatever height is left. Uses the pinned screen height,
+     so the keyboard never makes it smaller. */
+  const scene = $("scene"), giftSlot = gift.parentElement;
+  let fitQueued = false;
+  function scheduleFit() {
+    if (fitQueued) return;
+    fitQueued = true;
+    requestAnimationFrame(() => { fitQueued = false; fit(); fit(); });
+  }
+  function fit() {
+    if (present.hidden || opened) return;
+    const vh = window.XDvh?.() || innerHeight;
+    const wide = innerWidth >= 860;
+    const w = gift.getBoundingClientRect().width;
+    const free = scene.clientHeight - present.offsetHeight;          // > 0: room left in the scene
+    const over = Math.max(0, stage.offsetHeight - vh);                // > 0: stage taller than the screen
+    const slotH = giftSlot.offsetHeight;
+    // in the side-by-side layout only the part of the present taller than the tag counts
+    const growable = wide ? Math.max(0, slotH - tag.offsetHeight) + Math.max(0, free) : free;
+    const delta = ((over > 0 ? -over : growable) - 3) / 1.24;      // 3px spare for rounding
+    const maxW = wide ? 330 : Math.min(270, innerWidth * .62);
+    const next = Math.max(96, Math.min(maxW, w + delta));
+    if (Math.abs(next - w) > 2 || over > 0) stage.style.setProperty("--wbase", `${next.toFixed(1)}px`);
+  }
+  addEventListener("xd:vh", scheduleFit);
+  addEventListener("resize", scheduleFit);
+  document.fonts?.ready.then(scheduleFit);
+  if ("ResizeObserver" in window) {
+    const ro = new ResizeObserver(scheduleFit);
+    [$("tag"), document.querySelector(".intro"), $("footline")].forEach(el => el && ro.observe(el));
   }
   function say(text) { msg.textContent = text || ""; }
   function shake() { tag.classList.remove("shake"); void tag.offsetWidth; tag.classList.add("shake"); }
@@ -220,6 +281,7 @@ import "./fx.js";
   }
 
   function enterOpened() {
+    stage.style.removeProperty("--wbase");      // the unwrap scene has its own sizing
     renderCard();
     reveal.hidden = false;
     if (!total() || opened.mode === "all") {
@@ -377,6 +439,7 @@ import "./fx.js";
     $("openBtn").disabled = false;
     $("pwInput").value = "";
     fails = 0; busy = false; unwrapping = false;
+    scheduleFit();
   }
 
   footline();
