@@ -48,4 +48,4 @@ http.createServer(async (req, res) => {
     if (!res.headersSent) res.writeHead(500, { "content-type": "text/plain" });
     res.end("Server error");
   }
-}).listen(PORT, () => console.log(`🎁 Vánoční dárky: http://localhost:${PORT}  (dílna: /admin)`));
+}).listen(PORT, () => console.log(`🎁 Vánoční dárky: http://localhost:${PORT}  (dílna: /dilna)`));

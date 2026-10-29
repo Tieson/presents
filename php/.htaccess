@@ -8,7 +8,7 @@ DirectoryIndex index.html
   RewriteRule ^api/(.*)$ api.php?path=$1 [QSA,L]
 
   # Administrace
-  RewriteRule ^admin/?$ admin.html [L]
+  RewriteRule ^(admin|dilna)/?$ admin.html [L]
 
   # Data a konfigurace nikdy ven
   RewriteRule ^(data|config\.php|config\.sample\.php) - [F,L]

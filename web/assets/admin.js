@@ -29,8 +29,8 @@ import "./fx.js";
     try {
       return await rawApi(path, { ...opts, admin: true });
     } catch (err) {
-      if (err.status === 401 && !path.startsWith("admin/login")) {
-        showLogin("Přihlášení vypršelo. Přihlas se prosím znovu.");
+      if (err.status === 401) {
+        showLogin("Přihlášení tady už neplatí (odkaz mohl být vyměněn za nový). Otevři dílnu svým tajným odkazem.");
       }
       throw err;
     }
@@ -63,42 +63,160 @@ import "./fx.js";
     });
   }
 
-  /* ---------- login ---------- */
-  function showLogin(message = "") {
-    $("app").hidden = true;
-    $("login").hidden = false;
-    $("loginMsg").textContent = message;
-    setTimeout(() => $("loginPw").focus(), 50);
+  /* ---------- workshop: create / open with the secret link / account ---------- */
+  let ws = null;                                   // current workshop { id, name, email, key, … }
+  const linkFor = key => `${appBase()}dilna#klic=${key}`;
+
+  /** Accepts the whole link (…/dilna#klic=KEY), "klic=KEY" or just the key */
+  function keyFrom(text) {
+    const t = String(text || "").trim();
+    const m = t.match(/klic=([A-Za-z0-9_-]{32})/) || t.match(/^([A-Za-z0-9_-]{32})$/);
+    return m ? m[1] : null;
   }
 
-  $("loginForm").addEventListener("submit", async e => {
-    e.preventDefault();
-    const btn = $("loginBtn");
+  function showScreen(id) {
+    for (const s of ["login", "created", "app"]) $(s).hidden = s !== id;
+  }
+  function showLogin(message = "") {
+    ws = null;
+    cur = draft = null; snapshot = "";
+    try { $("acct").open && $("acct").close(); } catch { /* ignore */ }
+    showScreen("login");
+    $("loginMsg").textContent = message;
+    $("loginMsg").classList.toggle("ok", false);
+  }
+
+  function setWorkshop(w) {
+    ws = w;
+    $("brandSub").textContent = w.name;
+    document.title = `${w.name} · Ježíškova dílna`;
+  }
+
+  async function busy(btn, fn) {
     btn.disabled = true;
+    try { await fn(); } finally { btn.disabled = false; }
+  }
+
+  $("createForm").addEventListener("submit", e => {
+    e.preventDefault();
     $("loginMsg").textContent = "";
+    busy($("createBtn"), async () => {
+      try {
+        const body = { name: $("cName").value, email: $("cEmail").value };
+        if (!$("cCodeWrap").hidden) body.signupCode = $("cCode").value;
+        const res = await rawApi("workshop", { method: "POST", admin: true, body });
+        setWorkshop(res.workshop);
+        $("createdLink").textContent = linkFor(res.workshop.key);
+        $("createdSaved").checked = false;
+        $("createdGo").disabled = true;
+        showScreen("created");
+        window.XDfx?.burst(innerWidth / 2, innerHeight * .3, 120);
+      } catch (err) {
+        if (err.code === "bad_signup_code") {
+          const first = $("cCodeWrap").hidden;
+          $("cCodeWrap").hidden = false;
+          $("cCode").focus();
+          $("loginMsg").textContent = first ? "Zakládání dílen je jen pro pozvané. Zadej kód pro založení." : err.message;
+        } else {
+          $("loginMsg").textContent = err.message;
+        }
+      }
+    });
+  });
+
+  $("createdCopy").addEventListener("click", async () => {
+    if (await copy($("createdLink").textContent)) { toast("Odkaz zkopírován"); $("createdSaved").checked = true; $("createdGo").disabled = false; }
+  });
+  $("createdSaved").addEventListener("change", () => { $("createdGo").disabled = !$("createdSaved").checked; });
+  $("createdGo").addEventListener("click", () => showApp());
+
+  async function loginWithKey(key) {
+    const res = await rawApi("workshop/login", { method: "POST", admin: true, body: { key } });
+    setWorkshop(res.workshop);
+    return res.workshop;
+  }
+
+  $("loginForm").addEventListener("submit", e => {
+    e.preventDefault();
+    $("loginMsg").textContent = "";
+    const key = keyFrom($("loginKey").value);
+    if (!key) { $("loginMsg").textContent = "Tohle nevypadá jako odkaz do dílny. Vlož celý odkaz, který začíná adresou webu a končí #klic=…"; return; }
+    busy($("loginBtn"), async () => {
+      try {
+        await loginWithKey(key);
+        $("loginKey").value = "";
+        showApp();
+      } catch (err) {
+        $("loginMsg").textContent = err.message;
+      }
+    });
+  });
+
+  /* account panel */
+  function fillAccount() {
+    $("acctLink").textContent = ws.key ? linkFor(ws.key) : "Odkaz se nepodařilo načíst.";
+    $("aName").value = ws.name || "";
+    $("aEmail").value = ws.email || "";
+    const L = ws.limits || {};
+    $("acctUsage").textContent = `Boxy ${ws.giftCount ?? list.length} z ${L.gifts ?? "?"} · PDF ${formatSize(ws.usedBytes || 0)} z ${formatSize(L.storageBytes || 0)}`;
+  }
+  $("accountBtn").addEventListener("click", async () => {
+    try { setWorkshop((await api("workshop")).workshop); } catch (err) { if (err.status === 401) return; }
+    fillAccount();
+    $("acct").showModal();
+  });
+  $("acctClose").addEventListener("click", () => $("acct").close());
+  $("acct").addEventListener("click", e => { if (e.target === $("acct")) $("acct").close(); });
+  $("acctCopy").addEventListener("click", async () => { if (await copy($("acctLink").textContent)) toast("Odkaz zkopírován"); });
+
+  $("acctForm").addEventListener("submit", e => {
+    e.preventDefault();
+    busy($("acctSave"), async () => {
+      try {
+        const res = await api("workshop", { method: "PUT", body: { name: $("aName").value, email: $("aEmail").value } });
+        setWorkshop(res.workshop);
+        fillAccount();
+        toast("Uloženo");
+      } catch (err) { if (err.status !== 401) toast(err.message, true); }
+    });
+  });
+
+  $("acctRotate").addEventListener("click", async () => {
+    if (!(await confirmDialog({
+      title: "Vyměnit tajný odkaz?",
+      text: "Starý odkaz přestane fungovat a ostatní zařízení se z dílny odhlásí. Tady zůstaneš přihlášený a dostaneš nový odkaz.",
+      ok: "Vyměnit"
+    }))) return;
     try {
-      await rawApi("admin/login", { method: "POST", body: { password: $("loginPw").value } });
-      $("loginPw").value = "";
-      showApp();
-    } catch (err) {
-      $("loginMsg").textContent = err.message;
-      $("loginPw").select();
-    } finally {
-      btn.disabled = false;
-    }
+      const res = await api("workshop/rotate-key", { method: "POST" });
+      setWorkshop(res.workshop);
+      fillAccount();
+      toast("Máš nový odkaz. Ulož si ho.");
+    } catch (err) { if (err.status !== 401) toast(err.message, true); }
   });
 
   $("logout").addEventListener("click", async () => {
     if (isDirty() && !(await confirmDialog({ title: "Odhlásit bez uložení?", text: "Neuložené změny v boxu se ztratí.", ok: "Odhlásit" }))) return;
-    try { await rawApi("admin/logout", { method: "POST", admin: true }); } catch { /* ignore */ }
-    cur = draft = null; snapshot = "";
-    showLogin("Odhlášeno. Hezké svátky!");
+    if (!(await confirmDialog({ title: "Odhlásit na tomhle zařízení?", text: "Zpátky se dostaneš jen tajným odkazem. Máš ho uložený?", ok: "Odhlásit" }))) return;
+    try { await rawApi("workshop/logout", { method: "POST", admin: true }); } catch { /* ignore */ }
+    showLogin("Odhlášeno. Do dílny se vrátíš svým tajným odkazem.");
+  });
+
+  $("acctDelete").addEventListener("click", async () => {
+    if (!(await confirmDialog({
+      title: `Smazat dílnu „${ws.name}“?`,
+      text: `Smažou se všechny boxy (${ws.giftCount ?? list.length}) i nahraná PDF a odkazy na dárky přestanou fungovat. Tohle nejde vrátit.`,
+      ok: "Smazat dílnu"
+    }))) return;
+    try {
+      await api("workshop", { method: "DELETE" });
+      showLogin("Dílna je smazaná.");
+    } catch (err) { if (err.status !== 401) toast(err.message, true); }
   });
 
   /* ---------- app ---------- */
   async function showApp() {
-    $("login").hidden = true;
-    $("app").hidden = false;
+    showScreen("app");
     await loadList();
     const fromHash = decodeURIComponent(location.hash.slice(1));
     if (fromHash && list.some(g => g.code === fromHash)) select(fromHash, true);
@@ -779,10 +897,24 @@ import "./fx.js";
   /* keep relative times fresh */
   setInterval(() => { if (draft) renderWhen(); renderList(); }, 30000);
 
-  /* ---------- boot ---------- */
+  /* ---------- boot ----------
+     Opening the secret link (…/dilna#klic=KEY) signs in and removes the key from the address bar,
+     so it doesn't stay in history or on a screenshot. Otherwise the session cookie decides. */
   (async () => {
+    const key = keyFrom(location.hash);
+    if (key) {
+      history.replaceState(null, "", location.pathname + location.search);
+      try {
+        await loginWithKey(key);
+        showApp();
+        toast(`Vítej v dílně ${ws.name}`);
+      } catch (err) {
+        showLogin(err.message);
+      }
+      return;
+    }
     try {
-      await rawApi("admin/me", { admin: true });
+      setWorkshop((await rawApi("workshop", { admin: true })).workshop);
       showApp();
     } catch (err) {
       showLogin(err.status === 401 ? "" : err.message);

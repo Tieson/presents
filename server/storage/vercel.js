@@ -1,11 +1,15 @@
 /**
  * Serverless storage for Vercel:
- *  - box data in Upstash Redis (REST API; Vercel Marketplace → Upstash / "KV")
+ *  - data in Upstash Redis (REST API; Vercel Marketplace → Upstash / "KV")
+ *      xd:workshops  hash  id → workshop JSON
+ *      xd:keys       hash  sha256(secret key) → workshop id
+ *      xd:gifts      hash  code → box JSON          xd:own:<id>   set of the workshop's box codes
+ *      xd:files      hash  id → PDF meta JSON       xd:ownf:<id>  set of the workshop's file ids
  *  - PDF files in a *private* Vercel Blob store; files are always streamed
  *    through the API after the password + unlock check, the blob URL never
  *    reaches the browser. (BLOB_ACCESS=public works for a public store too.)
  */
-export function vercelStorage({ redisUrl, redisToken, blobToken, blobAccess = "private" }) {
+export function vercelStorage({ redisUrl, redisToken, blobToken, blobAccess = "private", blobImpl = null }) {
   if (!redisUrl || !redisToken) throw new Error("Missing Upstash Redis env (UPSTASH_REDIS_REST_URL / _TOKEN or KV_REST_API_URL / _TOKEN)");
 
   async function redis(...cmd) {
@@ -18,27 +22,43 @@ export function vercelStorage({ redisUrl, redisToken, blobToken, blobAccess = "p
     if (data.error) throw new Error(`Redis: ${data.error}`);
     return data.result;
   }
+  const parse = v => (v ? JSON.parse(v) : null);
 
   let blobMod;
-  const blob = async () => (blobMod ??= await import("@vercel/blob"));
+  const blob = async () => blobImpl || (blobMod ??= await import("@vercel/blob"));   // blobImpl: tests only
 
   return {
-    async listGifts() {
-      const flat = (await redis("HGETALL", "xd:gifts")) || [];
-      const out = [];
-      for (let i = 1; i < flat.length; i += 2) out.push(JSON.parse(flat[i]));
-      return out;
+    /* workshops */
+    async getWorkshop(id) { return parse(await redis("HGET", "xd:workshops", id)); },
+    async putWorkshop(w) { await redis("HSET", "xd:workshops", w.id, JSON.stringify(w)); },
+    async deleteWorkshop(id) {
+      await redis("HDEL", "xd:workshops", id);
+      await redis("DEL", `xd:own:${id}`, `xd:ownf:${id}`);
     },
-    async getGift(code) {
-      const v = await redis("HGET", "xd:gifts", code);
-      return v ? JSON.parse(v) : null;
+    async getKeyOwner(hash) { return (await redis("HGET", "xd:keys", hash)) || null; },
+    async setKeyOwner(hash, id) { await redis("HSET", "xd:keys", hash, id); },
+    async deleteKeyOwner(hash) { await redis("HDEL", "xd:keys", hash); },
+
+    /* gifts */
+    async listGiftsByOwner(owner) {
+      const codes = (await redis("SMEMBERS", `xd:own:${owner}`)) || [];
+      if (!codes.length) return [];
+      const vals = await redis("HMGET", "xd:gifts", ...codes);
+      return vals.map(parse).filter(g => g && g.owner === owner);
     },
+    async countGiftsByOwner(owner) { return Number(await redis("SCARD", `xd:own:${owner}`)) || 0; },
+    async getGift(code) { return parse(await redis("HGET", "xd:gifts", code)); },
     async putGift(g) {
       await redis("HSET", "xd:gifts", g.code, JSON.stringify(g));
+      if (g.owner) await redis("SADD", `xd:own:${g.owner}`, g.code);
     },
     async deleteGift(code) {
+      const g = await this.getGift(code);
       await redis("HDEL", "xd:gifts", code);
+      if (g?.owner) await redis("SREM", `xd:own:${g.owner}`, code);
     },
+
+    /* files */
     async saveFile(meta, buf) {
       const { put } = await blob();
       const res = await put(`vouchers/${meta.id}.pdf`, buf, {
@@ -48,10 +68,13 @@ export function vercelStorage({ redisUrl, redisToken, blobToken, blobAccess = "p
         token: blobToken
       });
       await redis("HSET", "xd:files", meta.id, JSON.stringify({ ...meta, url: res.url, access: blobAccess }));
+      if (meta.owner) await redis("SADD", `xd:ownf:${meta.owner}`, meta.id);
     },
-    async getFileMeta(id) {
-      const v = await redis("HGET", "xd:files", id);
-      return v ? JSON.parse(v) : null;
+    async getFileMeta(id) { return parse(await redis("HGET", "xd:files", id)); },
+    async listFilesByOwner(owner) {
+      const ids = (await redis("SMEMBERS", `xd:ownf:${owner}`)) || [];
+      if (!ids.length) return [];
+      return (await redis("HMGET", "xd:files", ...ids)).map(parse).filter(Boolean);
     },
     async readFile(id) {
       const meta = await this.getFileMeta(id);
@@ -68,6 +91,7 @@ export function vercelStorage({ redisUrl, redisToken, blobToken, blobAccess = "p
         try { await del(meta.url, { token: blobToken }); } catch { /* already gone */ }
       }
       await redis("HDEL", "xd:files", id);
+      if (meta?.owner) await redis("SREM", `xd:ownf:${meta.owner}`, id);
     }
   };
 }

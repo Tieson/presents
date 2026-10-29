@@ -8,32 +8,66 @@ Chyby mají tvar `{ "error": "kod_chyby", "message": "lidsky čitelný text" }`.
 | Metoda | Cesta | Popis |
 |---|---|---|
 | GET | `gifts/{code}` | Obálka dárku: `{ code, title, hasPassword, locked, openAt, serverNow }`. `title` je `null`, pokud ho tvůrce skryl. |
-| POST | `gifts/{code}/open` | Tělo `{ password }` nebo `{ token }` (dříve vydaný token, aby příjemce nemusel heslo psát znovu). Vrací `{ gift, token }`. `401 bad_password`, `423 locked` (+ `openAt`, `serverNow`), `404 not_found`. S admin cookie a `{ preview: true }` obejde zámek i heslo. |
+| POST | `gifts/{code}/open` | Tělo `{ password }` nebo `{ token }` (dříve vydaný token, aby příjemce nemusel heslo psát znovu). Vrací `{ gift, token }`. `401 bad_password`, `423 locked` (+ `openAt`, `serverNow`), `404 not_found`. Přihlášená dílna, které box patří, obejde s `{ preview: true }` zámek i heslo. |
 | GET | `gifts/{code}/items/{itemId}/file?t={token}[&dl=1]` | PDF položky. Server znovu ověří token i časový zámek. |
 
 `gift` = `{ code, title, message, signature, items: [{ id, name, description, file: { name, size } | null }] }`
 
-## Administrace (cookie `xd_admin` + hlavička `X-Admin: 1`)
+## Dílny (účty bez hesla)
+
+Všechny zápisy (vše kromě `GET` a cest `gifts/…`) potřebují hlavičku `X-Admin: 1` (ochrana proti CSRF).
+Přihlášení drží HttpOnly cookie `xd_ws` (rok). Bez ní vrací chráněné cesty `401 unauthorized`.
 
 | Metoda | Cesta | Popis |
 |---|---|---|
-| POST | `admin/login` | `{ password }` → nastaví cookie |
-| POST | `admin/logout` | smaže cookie |
-| GET | `admin/me` | `{ ok: true }` nebo 401 |
-| GET | `admin/gifts` | seznam boxů (souhrn) |
-| POST | `admin/gifts` | vytvoří nový box, vrátí ho celý |
+| POST | `workshop` | Založí dílnu. Tělo `{ name?, email?, signupCode? }` (`signupCode` jen pokud je nastavený `SIGNUP_CODE`). Vrátí `{ workshop }` včetně `key` a přihlásí. `400 bad_email`, `403 bad_signup_code`. |
+| POST | `workshop/login` | `{ key }` z tajného odkazu `…/dilna#klic=KEY`. Přihlásí, vrátí `{ workshop }`. `401 bad_key`. |
+| POST | `workshop/logout` | Odhlásí toto zařízení. |
+| GET | `workshop` | `{ workshop }` |
+| PUT | `workshop` | `{ name?, email? }` |
+| POST | `workshop/rotate-key` | Nový klíč, starý přestane platit a ostatní zařízení se odhlásí. Vrátí `{ workshop }` s novým `key`. |
+| DELETE | `workshop` | Smaže dílnu se všemi boxy a PDF. |
+
+`workshop` = `{ id, name, email, key, createdAt, giftCount, usedBytes, limits: { gifts, storageBytes, uploadBytes } }`
+
+## Boxy a PDF dílny
+
+Vyžadují přihlášenou dílnu. Cizí box nebo PDF vrací `404`, jako by neexistoval.
+
+| Metoda | Cesta | Popis |
+|---|---|---|
+| GET | `admin/gifts` | seznam boxů dílny (souhrn) |
+| POST | `admin/gifts` | vytvoří nový box, vrátí ho celý. `409 limit` při překročení `MAX_GIFTS` |
 | GET | `admin/gifts/{code}` | celý box |
-| PUT | `admin/gifts/{code}` | uloží box. `password`: řetězec = nastavit nové, `null` = bez hesla, vynecháno = beze změny |
+| PUT | `admin/gifts/{code}` | uloží box. `password`: řetězec = nastavit nové, `null` = bez hesla, vynecháno = beze změny. Připojit jde jen PDF vlastní dílny. |
 | DELETE | `admin/gifts/{code}` | smaže box i jeho PDF |
-| POST | `admin/gifts/{code}/regenerate-code` | nový kód (adresa); vrátí box |
-| POST | `admin/files` | tělo = surové PDF (`application/octet-stream`), hlavička `X-File-Name` (URL-encoded). Vrátí `{ id, name, size }` |
-| GET | `admin/files/{id}` | náhled PDF pro tvůrce |
+| POST | `admin/gifts/{code}/regenerate-code` | nový kód (adresa), vrátí box |
+| POST | `admin/files` | tělo = surové PDF (`application/octet-stream`), hlavička `X-File-Name` (URL-encoded). Vrátí `{ id, name, size }`. `413 too_large` / `413 quota` |
+| GET | `admin/files/{id}` | náhled PDF pro dílnu |
+
+## Uložená dílna
+
+```json
+{
+  "id": "…",
+  "name": "Tomova dílna",
+  "email": "",
+  "keyHash": "<sha256 hex klíče>",
+  "keyEnc": "<base64(iv12 | tag16 | AES-256-GCM(klíč))>",
+  "usedBytes": 12345,
+  "createdAt": "…", "updatedAt": "…"
+}
+```
+
+Klíč šifruje AES-256-GCM s klíčem `sha256("xd-key-enc|" + APP_SECRET)`. Formát je stejný v Node i PHP.
+Přihlašovací cookie = `<id>.<exp>.<HMAC(APP_SECRET, "ws|id|keyHash[0..16]|exp")>`, takže výměna klíče zneplatní všechna starší přihlášení.
 
 ## Datový model boxu (uložený)
 
 ```json
 {
   "code": "bekalo-mitusa",
+  "owner": "<id dílny>",
   "title": "Dárek pro sestřičku",
   "showTitle": true,
   "message": "…",

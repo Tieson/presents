@@ -70,3 +70,35 @@ export function normalizeCode(raw) {
   if (!/^[a-z]{12}$/.test(s)) return null;
   return `${s.slice(0, 6)}-${s.slice(6)}`;
 }
+
+/* ---------- workshop keys ---------- */
+
+/** Secret key for a workshop: 24 random bytes → 32 url-safe characters */
+export function generateKey() {
+  return b64url(crypto.randomBytes(24));
+}
+export const isKeyShaped = k => typeof k === "string" && /^[A-Za-z0-9_-]{32}$/.test(k);
+
+export function sha256hex(s) {
+  return crypto.createHash("sha256").update(String(s)).digest("hex");
+}
+
+/** AES-256-GCM with a key derived from APP_SECRET. Output: base64(iv[12] | tag[16] | ciphertext).
+    Same format as php/api.php (openssl aes-256-gcm), so data moves between backends. */
+function aesKey(secret) {
+  return crypto.createHash("sha256").update(`xd-key-enc|${secret}`).digest();
+}
+export function encrypt(secret, plain) {
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv("aes-256-gcm", aesKey(secret), iv);
+  const ct = Buffer.concat([c.update(String(plain), "utf8"), c.final()]);
+  return Buffer.concat([iv, c.getAuthTag(), ct]).toString("base64");
+}
+export function decrypt(secret, data) {
+  try {
+    const buf = Buffer.from(String(data), "base64");
+    const d = crypto.createDecipheriv("aes-256-gcm", aesKey(secret), buf.subarray(0, 12));
+    d.setAuthTag(buf.subarray(12, 28));
+    return Buffer.concat([d.update(buf.subarray(28)), d.final()]).toString("utf8");
+  } catch { return null; }
+}

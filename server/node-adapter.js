@@ -24,10 +24,10 @@ export async function handleApi(req, res) {
   else res.end();
 }
 
-/** Same routing the Vercel rewrites do: /admin → admin.html, /<gift-code> → index.html */
+/** Same routing the Vercel rewrites do: /dilna (and /admin) → admin.html, /<gift-code> → index.html */
 export function pageFor(pathname) {
   if (pathname === "/" ) return "/index.html";
-  if (/^\/admin\/?$/.test(pathname)) return "/admin.html";
+  if (/^\/(admin|dilna)\/?$/.test(pathname)) return "/admin.html";
   if (/^\/[a-zA-Z-]{12,16}\/?$/.test(pathname)) return "/index.html";
   return null;
 }

@@ -520,3 +520,62 @@ textarea.input { resize: vertical; min-height: 96px; }
 @media (max-width: 460px) {
   .brand-text { display: none; }
 }
+
+/* ---------- welcome: create / open a workshop ---------- */
+.welcome { width: min(820px, 100%); display: flex; flex-direction: column; align-items: center; gap: 26px; }
+.welcome-head { display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; }
+.welcome-head h1 { margin: 0; font-family: var(--f-display); font-weight: 400; font-size: clamp(36px, 7vw, 52px); line-height: 1.05; }
+.welcome-head h1 em { font-style: italic; font-weight: 500; }
+.welcome-head .login-note { max-width: 46ch; text-wrap: balance; }
+.welcome-grid { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; align-items: stretch; }
+.welcome-grid .login-card { width: 100%; align-items: stretch; text-align: left; gap: 16px; padding: 30px clamp(20px, 4vw, 30px) 26px; }
+.welcome-grid .login-card .btn { margin-top: auto; }
+.login-card h2 { margin: 0 0 2px; font-family: var(--f-display); font-style: italic; font-weight: 400; font-size: 26px; color: var(--gold-light); }
+.w-field { display: flex; flex-direction: column; gap: 4px; }
+.w-field label { font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--gold); }
+.w-field label span { letter-spacing: .04em; text-transform: none; color: var(--muted); margin-left: 4px; }
+.w-field .login-input { text-align: left; letter-spacing: .02em; padding-inline: 2px; }
+.w-field .login-input.mono { font-family: var(--f-mono); font-size: 14px; }
+.w-hint { margin: 2px 0 0; font-size: 13px; line-height: 1.45; color: var(--muted); }
+.welcome .login-msg { text-align: center; }
+
+/* ---------- created: the secret link ---------- */
+.created-card { width: min(560px, 100%); gap: 16px; }
+.created-title { font-size: clamp(32px, 6vw, 44px) !important; }
+.keybox {
+  width: 100%;
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 12px 12px 16px;
+  border: 1px dashed rgba(214,178,106,.6); border-radius: 6px;
+  background: rgba(5, 20, 14, .55);
+  text-align: left;
+}
+.keybox code { flex: 1 1 auto; min-width: 0; font-size: 13px; line-height: 1.45; color: var(--gold-light); overflow-wrap: anywhere; user-select: all; }
+.keybox .btn, .keybox .chip, .login-card .keybox .btn { flex: none; width: auto; margin-top: 0; }
+.keybox.light { background: #fffaf0; border-color: rgba(140,106,44,.55); }
+.keybox.light code { color: var(--burgundy); }
+.key-rules { margin: 0; padding: 0 0 0 18px; text-align: left; color: var(--muted); font-size: 14px; display: flex; flex-direction: column; gap: 6px; }
+.key-rules li::marker { color: var(--gold); }
+.saved-check { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-size: 15px; color: var(--cream); }
+.saved-check input { width: 18px; height: 18px; accent-color: var(--gold); }
+.created-card .btn { width: 100%; }
+
+/* ---------- topbar account button ---------- */
+#accountBtn { display: inline-flex; align-items: center; gap: 8px; }
+
+/* ---------- account panel ---------- */
+.acct { max-width: min(520px, calc(100% - 32px)); width: 100%; }
+.acct-card { gap: 0; padding: 0; }
+.acct-head { display: flex; align-items: center; justify-content: space-between; padding: 22px 24px 12px; }
+.acct-close { appearance: none; background: none; border: 0; cursor: pointer; color: var(--ink-soft); padding: 8px; border-radius: 4px; display: grid; place-items: center; }
+.acct-close:hover { color: var(--ink); background: rgba(42,26,16,.06); }
+.acct-block { padding: 16px 24px; border-top: 1px solid var(--line-ink); display: flex; flex-direction: column; gap: 10px; }
+.acct-block .hint { margin: 0; }
+.acct-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.acct-foot { flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; padding-bottom: 22px; }
+
+@media (max-width: 700px) {
+  .welcome-grid { grid-template-columns: minmax(0, 1fr); }
+  .keybox { flex-direction: column; align-items: stretch; }
+  #accountBtn span { display: none; }
+}

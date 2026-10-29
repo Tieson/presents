@@ -17,28 +17,82 @@
 <body class="admin">
 <canvas id="fx" data-density=".3" aria-hidden="true"></canvas>
 
-<!-- ============ LOGIN ============ -->
+<!-- ============ WELCOME: create a workshop or open one with its secret link ============ -->
 <main id="login" class="login" hidden>
-  <form id="loginForm" class="login-card" novalidate>
-    <span class="monogram" aria-hidden="true"></span>
-    <p class="eyebrow ruled">Vánoční dárky</p>
-    <h1>Ježíškova <em class="foil">dílna</em></h1>
-    <p class="login-note">Tady se balí dárky. Zadej heslo do dílny.</p>
-    <label for="loginPw" class="visually-hidden">Heslo do dílny</label>
-    <input id="loginPw" class="login-input" type="password" autocomplete="current-password" placeholder="heslo do dílny">
-    <button class="btn" type="submit" id="loginBtn">Vstoupit</button>
+  <div class="welcome">
+    <header class="welcome-head">
+      <span class="monogram" aria-hidden="true"></span>
+      <p class="eyebrow ruled">Vánoční dárky</p>
+      <h1>Ježíškova <em class="foil">dílna</em></h1>
+      <p class="login-note">Zabal online dárky s poukazy v PDF. Bez registrace a bez hesla: dílnu otevírá tvůj tajný odkaz.</p>
+    </header>
+
+    <div class="welcome-grid">
+      <form id="createForm" class="login-card" novalidate>
+        <h2>Založit dílnu</h2>
+        <div class="w-field">
+          <label for="cName">Jak se bude jmenovat</label>
+          <input id="cName" class="login-input" type="text" maxlength="80" placeholder="Tomova dílna" autocomplete="off">
+        </div>
+        <div class="w-field">
+          <label for="cEmail">E-mail <span>nepovinný</span></label>
+          <input id="cEmail" class="login-input" type="email" maxlength="200" placeholder="tom@example.cz" autocomplete="email">
+          <p class="w-hint">Zatím ti nic neposíláme. Uložíme ho, abychom ti mohli odkaz připomenout, až to půjde.</p>
+        </div>
+        <div class="w-field" id="cCodeWrap" hidden>
+          <label for="cCode">Kód pro založení</label>
+          <input id="cCode" class="login-input" type="text" maxlength="80" autocomplete="off" spellcheck="false">
+          <p class="w-hint">Tahle dílna je jen pro pozvané. Kód ti dá ten, kdo ji provozuje.</p>
+        </div>
+        <button class="btn gold" type="submit" id="createBtn">Založit dílnu</button>
+      </form>
+
+      <form id="loginForm" class="login-card" novalidate>
+        <h2>Už mám dílnu</h2>
+        <div class="w-field">
+          <label for="loginKey">Tajný odkaz nebo klíč</label>
+          <input id="loginKey" class="login-input mono" type="text" placeholder="…/dilna#klic=…" autocomplete="off" spellcheck="false" autocapitalize="off">
+          <p class="w-hint">Stačí odkaz otevřít, nebo ho sem vlož celý.</p>
+        </div>
+        <button class="btn" type="submit" id="loginBtn">Otevřít dílnu</button>
+      </form>
+    </div>
     <p class="login-msg" id="loginMsg" role="status" aria-live="polite"></p>
-  </form>
+  </div>
+</main>
+
+<!-- ============ CREATED: show the secret link once, make sure it gets saved ============ -->
+<main id="created" class="login" hidden>
+  <div class="login-card created-card">
+    <span class="monogram" aria-hidden="true"></span>
+    <p class="eyebrow ruled">Dílna je připravená</p>
+    <h1 class="created-title">Tvůj tajný <em class="foil">odkaz</em></h1>
+    <p class="login-note">Tímhle odkazem se do dílny dostaneš z jakéhokoli zařízení. Jiný přístup neexistuje, tak si ho hned ulož.</p>
+    <div class="keybox">
+      <code class="mono" id="createdLink"></code>
+      <button type="button" class="btn small gold" id="createdCopy">Kopírovat</button>
+    </div>
+    <ul class="key-rules">
+      <li>Ulož si ho do záložek, poznámek nebo si ho pošli e-mailem.</li>
+      <li>Kdo ho má, může dárky upravovat. Sdílej ho jen s tím, s kým chceš dílnu spravovat.</li>
+      <li>Na tomhle zařízení zůstaneš přihlášený i bez něj.</li>
+    </ul>
+    <label class="saved-check">
+      <input type="checkbox" id="createdSaved">
+      <span>Odkaz mám uložený</span>
+    </label>
+    <button class="btn" type="button" id="createdGo" disabled>Vstoupit do dílny</button>
+  </div>
 </main>
 
 <!-- ============ APP ============ -->
 <div id="app" class="app" hidden>
   <header class="topbar">
-    <a class="brand" href="admin" aria-label="Ježíškova dílna">
+    <a class="brand" href="dilna" aria-label="Ježíškova dílna">
       <span class="monogram small" aria-hidden="true"></span>
       <span class="brand-text">
         <span class="brand-name">Ježíškova <em>dílna</em></span>
-        <span class="brand-sub">Vánoční dárky · správa</span>
+        <span class="brand-sub" id="brandSub">Vánoční dárky · správa</span>
       </span>
     </a>
     <div class="top-actions">
@@ -46,7 +100,10 @@
         <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
         Nový box
       </button>
-      <button class="top-link" type="button" id="logout">Odhlásit</button>
+      <button class="top-link" type="button" id="accountBtn">
+        <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M5.6 8.4l2.8-2.8M6.3 3.4l1-1a2.5 2.5 0 013.5 3.5l-1 1M7.7 10.6l-1 1a2.5 2.5 0 01-3.5-3.5l1-1" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>
+        <span>Můj odkaz</span>
+      </button>
     </div>
   </header>
 
@@ -279,6 +336,50 @@
     <button type="button" class="btn small gold" id="save" disabled>Uložit změny</button>
   </div>
 </div>
+
+<!-- ============ ACCOUNT PANEL ============ -->
+<dialog class="dlg acct" id="acct">
+  <div class="dlg-card acct-card">
+    <div class="acct-head">
+      <h2>Moje dílna</h2>
+      <button type="button" class="acct-close" id="acctClose" aria-label="Zavřít">
+        <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="1.5"/></svg>
+      </button>
+    </div>
+
+    <section class="acct-block">
+      <span class="label">Tajný odkaz</span>
+      <div class="keybox light">
+        <code class="mono" id="acctLink"></code>
+        <button type="button" class="chip" id="acctCopy">Kopírovat</button>
+      </div>
+      <p class="hint">Kdo ho má, může dárky upravovat. Když unikne, vyměň ho za nový. Starý přestane platit a ostatní zařízení se odhlásí.</p>
+      <div class="chips">
+        <button type="button" class="chip" id="acctRotate">Vyměnit za nový odkaz</button>
+      </div>
+    </section>
+
+    <form class="acct-block" id="acctForm" novalidate>
+      <div class="field">
+        <label for="aName" class="label">Název dílny</label>
+        <input id="aName" class="input" type="text" maxlength="80">
+      </div>
+      <div class="field">
+        <label for="aEmail" class="label">E-mail (nepovinný)</label>
+        <input id="aEmail" class="input" type="email" maxlength="200" placeholder="pro připomenutí odkazu, až to půjde">
+      </div>
+      <div class="acct-row">
+        <span class="meta-line" id="acctUsage"></span>
+        <button type="submit" class="btn small" id="acctSave">Uložit</button>
+      </div>
+    </form>
+
+    <section class="acct-block acct-foot">
+      <button type="button" class="chip" id="logout">Odhlásit na tomhle zařízení</button>
+      <button type="button" class="danger-link" id="acctDelete">Smazat dílnu</button>
+    </section>
+  </div>
+</dialog>
 
 <dialog class="dlg" id="dlg">
   <form method="dialog" class="dlg-card">

@@ -5,7 +5,7 @@ const web = resolve(import.meta.dirname, "web");
 
 /**
  * Dev only: runs the real API (server/app.js, file storage in ./data) inside the
- * Vite dev server and mimics the production rewrites (/admin, /<gift-code>).
+ * Vite dev server and mimics the production rewrites (/dilna, /<gift-code>).
  */
 function devApi() {
   return {
@@ -15,9 +15,9 @@ function devApi() {
       const { loadEnv } = await import("./server/env.js");
       loadEnv();
       process.env.STORAGE ??= "fs";
-      if (!process.env.ADMIN_PASSWORD) {
-        process.env.ADMIN_PASSWORD = "admin";
-        server.config.logger.warn("\n  ⚠ ADMIN_PASSWORD není v .env – pro vývoj platí heslo do dílny „admin“.\n");
+      if (!process.env.APP_SECRET) {
+        process.env.APP_SECRET = "dev-only-secret-not-for-production";
+        server.config.logger.warn("\n  ⚠ APP_SECRET není v .env – pro vývoj použiju dočasný. Na produkci ho nastav.\n");
       }
       const { handleApi, pageFor } = await import("./server/node-adapter.js");
       server.middlewares.use(async (req, res, next) => {
