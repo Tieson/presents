@@ -43,10 +43,11 @@ h1 em { display: block; font-style: italic; font-weight: 500; font-size: 1.3em; 
 
 /* ---------- present + tag ---------- */
 .present { --w: var(--wbase); display: flex; flex-direction: column; align-items: center; width: 100%; }
-.gift-slot { display: grid; place-items: center; }
+.gift-slot { display: grid; place-items: center; position: relative; z-index: 4; }   /* above the string */
 
 /* ---------- tag ---------- */
-.string { width: 1px; height: clamp(14px, 3svh, 40px); background: linear-gradient(var(--gold), rgba(214,178,106,.4)); margin-top: clamp(10px, 2svh, 18px); flex: none; }
+/* the string starts under the box (hidden behind it), so it looks tied on */
+.string { position: relative; z-index: 3; width: 1px; height: calc(clamp(14px, 3svh, 40px) + var(--w) * .2); background: linear-gradient(var(--gold), rgba(214,178,106,.4)); margin-top: calc(var(--w) * -.2); flex: none; }
 .tag {
   position: relative;
   width: min(350px, 100%);
@@ -282,8 +283,8 @@ h1 em { display: block; font-style: italic; font-weight: 500; font-size: 1.3em; 
   /* the string runs into the hole, so it overlaps the tag's left edge */
   .string {
     position: relative; z-index: 3;
-    width: calc(clamp(40px, 6vw, 90px) + 24px); height: 1px;
-    margin: 0 -24px 0 calc(var(--w) * .12);
+    width: calc(clamp(40px, 6vw, 90px) + 24px + var(--w) * .3); height: 1px;
+    margin: 0 -24px 0 calc(var(--w) * -.3);
     background: linear-gradient(90deg, var(--gold), rgba(214,178,106,.6));
   }
   /* tag turned on its side: cut corners + hole on the left, text stays horizontal */
