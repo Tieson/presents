@@ -81,6 +81,41 @@ export async function run(base) {
   r = await A("PUT", "admin/gifts/" + code, { title: "T", anytime: true, appearance: { paper: "<script>", pattern: "x", ribbon: 5, ribbonStyle: "zz", seal: "" }, reveal: "bogus", items: [{ id: "abcd1", name: "Masáž", file: { id: fid } }] });
   ok(r.d.appearance.paper === "burgundy" && r.d.appearance.pattern === "stripes" && r.d.appearance.seal === "" && r.d.reveal === "sequential", "invalid values rejected, reveal kept");
   r = await anon("GET", "gifts/" + code); ok(r.d.appearance?.paper === "burgundy", "public meta has appearance");
+  const items1 = [{ id: "abcd1", name: "Masáž", file: { id: fid } }];
+  r = await A("PUT", "admin/gifts/" + code, { title: "T", anytime: true, appearance: { paper: "kraft", pattern: "gingerbread", patternColor: "red", patternOpacity: 140, ribbon: "copper", ribbonStyle: "none", bow: "rosette", deco: "holly", seal: "T" }, items: items1 });
+  ok(r.d.appearance.paper === "kraft" && r.d.appearance.pattern === "gingerbread" && r.d.appearance.patternColor === "red" && r.d.appearance.patternOpacity === 90
+    && r.d.appearance.ribbonStyle === "none" && r.d.appearance.bow === "rosette" && r.d.appearance.deco === "holly", "new papers, patterns, pattern colour + opacity (capped), bows, decorations");
+  r = await A("PUT", "admin/gifts/" + code, { title: "T", anytime: true, appearance: { paper: "kraft", patternColor: "pink<", patternOpacity: "x", bow: "huge", deco: "<img>" }, items: items1 });
+  ok(r.d.appearance.patternColor === null && r.d.appearance.patternOpacity === null && r.d.appearance.bow === "classic" && r.d.appearance.deco === "none", "invalid colour/opacity/bow/decoration → defaults");
+
+  /* ---------- photo in the box ---------- */
+  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from("JFIF fake image body")]);
+  r = await A("POST", "admin/files", jpeg, { headers: { "X-File-Name": encodeURIComponent("Hory.jpg"), "X-Image-Width": "1200", "X-Image-Height": "800" } });
+  ok(r.s === 201 && r.d.type === "image/jpeg" && r.d.w === 1200 && r.d.h === 800, "upload photo (type from the bytes, size from headers)");
+  const img = r.d.id;
+  r = await A("POST", "admin/files", Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>")); ok(r.s === 415, "SVG / unknown files rejected");
+  r = await A("PUT", "admin/gifts/" + code, { title: "T", anytime: true, items: [...items1, { id: "abcd3", name: "Fotka?", file: { id: img } }], photo: { file: { id: fid } } });
+  ok(r.d.items[0].file?.id === fid && r.d.items[1].file === null && r.d.photo === null, "photo can't be a PDF, voucher can't be a photo");
+  r = await A("PUT", "admin/gifts/" + code, { title: "T", anytime: true, items: items1, photo: { file: { id: img }, caption: "  Na   horách\n2025 ", frame: "postcard" } });
+  ok(r.s === 200 && r.d.photo?.file?.id === img && r.d.photo.caption === "Na horách 2025" && r.d.photo.frame === "postcard", "attach photo with caption + frame");
+  r = await A("GET", "workshop"); ok(r.d.workshop.usedBytes === pdf.length + jpeg.length, "photo counts towards the space");
+  r = await B("PUT", "admin/gifts/" + codeB, { title: "B", items: [], photo: { file: { id: img } } }); ok(r.s === 200 && r.d.photo === null, "B can't use A's photo");
+  r = await B("GET", "admin/files/" + img); ok(r.s === 404, "B can't read A's photo");
+  r = await A("GET", "admin/files/" + img); ok(r.s === 200 && r.h.get("content-type") === "image/jpeg" && r.h.get("x-content-type-options") === "nosniff", "workshop preview of the photo");
+  r = await A("PUT", "admin/gifts/" + code, { title: "T", anytime: true, items: items1 });
+  ok(r.d.photo?.file?.id === img, "photo kept when not sent");
+  r = await anon("GET", `gifts/${code}/photo`); ok(r.s === 401, "photo without token → 401");
+  r = await anon("POST", `gifts/${code}/open`, { password: "vanoce" });
+  const ptok = r.d.token;
+  ok(r.s === 200 && r.d.gift.photo?.caption === "Na horách 2025" && r.d.gift.photo.frame === "postcard" && r.d.gift.photo.w === 1200 && !JSON.stringify(r.d.gift).includes(img), "opened box has the photo (no file id)");
+  r = await anon("GET", `gifts/${code}/photo?t=${encodeURIComponent(ptok)}`);
+  ok(r.s === 200 && r.h.get("content-type") === "image/jpeg" && Buffer.from(r.d).equals(jpeg), "photo with token");
+  r = await A("PUT", "admin/gifts/" + code, { title: "T", anytime: false, openAt: "2030-12-24T17:00:00.000Z", items: items1 });
+  r = await anon("GET", `gifts/${code}/photo?t=${encodeURIComponent(ptok)}`); ok(r.s === 423, "locked box → photo locked too");
+  r = await A("PUT", "admin/gifts/" + code, { title: "T", anytime: true, items: items1, photo: null });
+  ok(r.d.photo === null, "remove photo");
+  r = await A("GET", "admin/files/" + img); ok(r.s === 404, "removed photo deleted");
+  r = await A("GET", "workshop"); ok(r.d.workshop.usedBytes === pdf.length, "its space freed");
 
   /* ---------- code, files, password removal ---------- */
   r = await A("PUT", "admin/gifts/" + code, { title: "X", anytime: true, password: null, items: [{ id: "abcd2", name: "Večeře" }] });

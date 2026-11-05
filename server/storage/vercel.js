@@ -63,10 +63,12 @@ export function vercelStorage({ redisUrl, redisToken, blobToken, blobAccess = "p
     /* files */
     async saveFile(meta, buf) {
       const { put } = await blob();
-      const res = await put(`vouchers/${meta.id}.pdf`, buf, {
+      const type = meta.type || "application/pdf";
+      const ext = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" }[type] || "pdf";
+      const res = await put(`${ext === "pdf" ? "vouchers" : "photos"}/${meta.id}.${ext}`, buf, {
         access: blobAccess,
         addRandomSuffix: true,
-        contentType: "application/pdf",
+        contentType: type,
         token: blobToken
       });
       await redis("HSET", K("files"), meta.id, JSON.stringify({ ...meta, url: res.url, access: blobAccess }));

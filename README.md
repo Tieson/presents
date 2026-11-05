@@ -12,7 +12,8 @@ zadá heslo a ve stanovený čas si dárek „rozbalí“. Dárky se balí v **J
 - **Heslo**, nebo dárek bez hesla. Na velikosti písmen a diakritice nezáleží. Server ukládá jen otisk (PBKDF2).
 - **Čas odemčení:** Štědrý večer (24. 12. 18:00), vlastní datum a čas, nebo „kdykoli“. Navíc **ruční odemčení** jedním přepínačem.
 - **Vše kontroluje backend:** heslo, čas odemčení (podle hodin serveru) i stažení PDF. Odkaz na PDF má podepsaný token a server při každém stažení znovu ověří i zámek.
-- **Vzhled krabice:** 8 papírů, 6 vzorů (hladký, proužky, puntíky, hvězdičky, vločky, kostka), 6 barev stuhy, převázání do kříže nebo jednou stuhou a pečeť s iniciálami. Živý náhled v dílně, ikonky v seznamu boxů mají stejné barvy.
+- **Vzhled krabice:** 14 papírů (i hnědý balicí, zlatý nebo mrazivě modrý) a 13 vzorů, z toho vánoční: stromky, baňky, cesmína, lízátka, perníčky, sobi, srdíčka, vločky a hvězdičky. U vzoru jde nastavit **barvu** (nabídka sedí k papíru) a **výraznost** posuvníkem. Dál 10 barev stuhy, převázání do kříže, jednou stuhou nebo bez stuhy, 5 druhů **mašle** (klasická, dvojitá, růžice, malá, bez mašle), 7 **ozdob** (cesmína, jehličí se šiškou, lízátko, baňka, hvězda, zvonečky, pomeranč se skořicí) a pečeť s iniciálami. Živý náhled v dílně, ikonky v seznamu boxů mají stejné barvy.
+- **Fotka nebo pohled:** do boxu jde vložit vlastní fotku. Po rozbalení ji příjemce uvidí jako polaroid s popiskem, nebo jako pohlednici s věnováním a známkou. Prohlížeč fotku před nahráním zmenší (max. 1600 px) a uloží znovu jako JPEG, čímž z ní zmizí i údaje o místě pořízení (EXIF/GPS). Fotka je chráněná stejně jako PDF: až po hesle a v čase odemčení.
 - **Rozbalování:** najednou, postupně (každá položka je malá krabička) nebo ať si vybere příjemce. Postup se příjemci pamatuje i po zavření stránky. „Zabalit znovu“ ho vynuluje.
 - Náhled jako příjemce pro přihlášeného tvůrce (obejde heslo i zámek).
 

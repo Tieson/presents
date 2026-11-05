@@ -183,23 +183,50 @@
                 <span class="label">Vzor <em id="patternName"></em></span>
                 <div class="swatches tiles" id="patternPicker" role="radiogroup" aria-label="Vzor papíru"></div>
               </div>
+              <div class="picker" id="inkRow">
+                <span class="label">Barva vzoru <em id="inkName"></em></span>
+                <div class="ink-row">
+                  <div class="swatches" id="inkPicker" role="radiogroup" aria-label="Barva vzoru"></div>
+                  <label class="range">
+                    <span>Výraznost</span>
+                    <input type="range" id="fOpacity" min="5" max="90" step="1" aria-describedby="opacityOut">
+                    <output id="opacityOut" for="fOpacity"></output>
+                  </label>
+                </div>
+              </div>
               <div class="picker">
                 <span class="label">Stuha <em id="ribbonName"></em></span>
                 <div class="swatches" id="ribbonPicker" role="radiogroup" aria-label="Barva stuhy"></div>
               </div>
-              <div class="picker-row">
-                <div class="picker">
-                  <span class="label">Převázání</span>
-                  <div class="segmented" id="stylePicker" role="radiogroup" aria-label="Převázání stuhou"></div>
-                </div>
-                <div class="picker">
-                  <label class="label" for="fSeal">Pečeť</label>
-                  <input id="fSeal" class="input seal-input" type="text" maxlength="2" placeholder="—" autocomplete="off" spellcheck="false">
-                </div>
+              <div class="picker">
+                <span class="label">Převázání</span>
+                <div class="segmented" id="stylePicker" role="radiogroup" aria-label="Převázání stuhou"></div>
+              </div>
+              <div class="picker">
+                <span class="label">Mašle</span>
+                <div class="chipset" id="bowPicker" role="radiogroup" aria-label="Mašle"></div>
+              </div>
+              <div class="picker">
+                <span class="label">Ozdoba <em id="decoName"></em></span>
+                <div class="deco-pick" id="decoPicker" role="radiogroup" aria-label="Ozdoba"></div>
+              </div>
+              <div class="picker">
+                <label class="label" for="fSeal">Pečeť</label>
+                <input id="fSeal" class="input seal-input" type="text" maxlength="2" placeholder="—" autocomplete="off" spellcheck="false">
               </div>
               <p class="hint">Do pečeti napiš jedno nebo dvě písmena, třeba iniciály. Prázdné pole = bez pečeti.</p>
             </div>
           </div>
+        </section>
+
+        <!-- photo -->
+        <section class="block" id="photoBlock">
+          <header class="block-head">
+            <h3>Fotka nebo pohled</h3>
+            <p>Nepovinné. Po rozbalení ji příjemce najde v dárku jako fotku nebo pohlednici s věnováním.</p>
+          </header>
+          <div id="photoArea"></div>
+          <input type="file" id="photoInput" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/*" hidden>
         </section>
 
         <!-- password -->

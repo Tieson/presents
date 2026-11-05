@@ -250,7 +250,7 @@ import "./fx.js";
       const st = statusOf(g);
       return `<li>
         <button type="button" class="gl-item${cur && g.code === cur.code ? " active" : ""}${st.ok ? " open" : ""}" data-code="${esc(g.code)}">
-          <span class="gl-box${W.normalize(g.appearance).ribbonStyle === "single" ? " rb-single" : ""}" style="--w:46px;${esc(styleVars(g.appearance))}" aria-hidden="true"></span>
+          <span class="gl-box rb-${W.normalize(g.appearance).ribbonStyle}" style="--w:46px;${esc(styleVars(g.appearance))}" aria-hidden="true"></span>
           <span class="gl-title">${esc(g.title)}</span>
           <span class="gl-sub"><span class="mono">${esc(g.code)}</span><span>${g.itemCount} ${plural(g.itemCount, "položka", "položky", "položek")}</span></span>
           <span class="gl-flags">
@@ -299,7 +299,8 @@ import "./fx.js";
       title: g.title, showTitle: !!g.showTitle, message: g.message || "", signature: g.signature || "",
       anytime: !!g.anytime, openAt: g.openAt, manualUnlock: !!g.manualUnlock,
       appearance: W.normalize(g.appearance), reveal: W.REVEALS[g.reveal] ? g.reveal : "all",
-      items: g.items.map(i => ({ id: i.id, name: i.name, description: i.description, file: i.file ? { ...i.file } : null }))
+      items: g.items.map(i => ({ id: i.id, name: i.name, description: i.description, file: i.file ? { ...i.file } : null })),
+      photo: g.photo ? { file: { ...g.photo.file }, caption: g.photo.caption || "", frame: g.photo.frame || "polaroid" } : null
     };
   }
 
@@ -363,6 +364,8 @@ import "./fx.js";
     document.querySelectorAll('input[name="reveal"]').forEach(r => { r.checked = r.value === draft.reveal; });
     $("fSeal").value = draft.appearance.seal;
     renderLook();
+    photoUpload = null;
+    renderPhoto();
     $("fPwOn").checked = pw.on;
     $("fPw").value = "";
     $("fPw").classList.remove("invalid");
@@ -499,10 +502,65 @@ import "./fx.js";
   buildPicker($("paperPicker"), Object.entries(W.PAPERS), "paper", "paper");
   buildPicker($("patternPicker"), Object.entries(W.PATTERNS), "tile", "pattern");
   buildPicker($("ribbonPicker"), Object.entries(W.RIBBONS), "ribbon", "ribbon");
+
+  /* pattern colour: only the colours that suit the current paper (+ the chosen one, if it doesn't) */
+  let inkKeys = [];
+  function buildInks() {
+    const a = draft.appearance;
+    const keys = [...W.PAPERS[a.paper].inks];
+    if (a.patternColor && !keys.includes(a.patternColor)) keys.push(a.patternColor);
+    if (keys.join() === inkKeys.join()) return;
+    inkKeys = keys;
+    $("inkPicker").innerHTML = keys.map(k =>
+      `<button type="button" class="sw ink" role="radio" data-k="${k}" aria-label="${esc(W.INKS[k].name)}" title="${esc(W.INKS[k].name)}" style="--ink:rgb(${W.INKS[k].rgb})"></button>`).join("");
+  }
+  $("inkPicker").addEventListener("click", e => {
+    const b = e.target.closest("[data-k]");
+    if (!b || !draft) return;
+    // the paper's own default stays "automatic", so changing the paper later still picks a fitting colour
+    draft.appearance.patternColor = b.dataset.k === W.PAPERS[draft.appearance.paper].inks[0] ? null : b.dataset.k;
+    renderLook(); updateDirty();
+  });
+  $("inkPicker").addEventListener("keydown", e => {
+    if (!["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp"].includes(e.key) || !draft) return;
+    e.preventDefault();
+    const cur = W.inkOf(draft.appearance).key, i = inkKeys.indexOf(cur);
+    const next = inkKeys[(i + (e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : -1) + inkKeys.length) % inkKeys.length];
+    draft.appearance.patternColor = next === W.PAPERS[draft.appearance.paper].inks[0] ? null : next;
+    renderLook(); updateDirty();
+    $("inkPicker").querySelector(`[data-k="${next}"]`)?.focus();
+  });
+  $("fOpacity").addEventListener("input", () => {
+    if (!draft) return;
+    draft.appearance.patternOpacity = Number($("fOpacity").value);
+    renderLook(); updateDirty();
+  });
+
+  /* bow + decoration */
+  $("bowPicker").innerHTML = Object.entries(W.BOWS).map(([k, v]) => `<button type="button" class="chip-pick" role="radio" data-k="${k}">${esc(v.name)}</button>`).join("");
+  $("decoPicker").innerHTML = Object.entries(W.DECOS).map(([k, v]) =>
+    `<button type="button" class="deco-sw" role="radio" data-k="${k}" aria-label="${esc(v.name)}" title="${esc(v.name)}">${W.DECO_SVG[k] || `<svg viewBox="0 0 100 70" aria-hidden="true"><path d="M30 20l40 30M70 20L30 50" stroke="currentColor" stroke-width="3" stroke-linecap="round" opacity=".45"/></svg>`}</button>`).join("");
+  for (const [id, field] of [["bowPicker", "bow"], ["decoPicker", "deco"]]) {
+    const el = $(id), keys = Object.keys(field === "bow" ? W.BOWS : W.DECOS);
+    el.addEventListener("click", e => {
+      const b = e.target.closest("[data-k]");
+      if (!b || !draft) return;
+      draft.appearance[field] = b.dataset.k;
+      renderLook(); updateDirty();
+      if (!reduce && field !== "bow") { lookGift.classList.remove("pop"); void lookGift.offsetWidth; lookGift.classList.add("pop"); }
+    });
+    el.addEventListener("keydown", e => {
+      if (!["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp"].includes(e.key) || !draft) return;
+      e.preventDefault();
+      const i = keys.indexOf(draft.appearance[field]);
+      draft.appearance[field] = keys[(i + (e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : -1) + keys.length) % keys.length];
+      renderLook(); updateDirty();
+      el.querySelector(`[data-k="${draft.appearance[field]}"]`)?.focus();
+    });
+  }
   $("stylePicker").innerHTML = Object.entries(W.RIBBON_STYLES).map(([k, name]) =>
-    `<button type="button" role="radio" data-k="${k}">${k === "cross"
-      ? `<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="1" width="12" height="12" rx="1.5" fill="none" stroke="currentColor"/><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2"/></svg>`
-      : `<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="1" width="12" height="12" rx="1.5" fill="none" stroke="currentColor"/><path d="M7 1v12" stroke="currentColor" stroke-width="2"/></svg>`}${esc(name)}</button>`).join("");
+    `<button type="button" role="radio" data-k="${k}"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="1" y="1" width="12" height="12" rx="1.5" fill="none" stroke="currentColor"/>${
+      k === "cross" ? `<path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2"/>` : k === "single" ? `<path d="M7 1v12" stroke="currentColor" stroke-width="2"/>` : ""}</svg>${esc(name)}</button>`).join("");
   $("stylePicker").addEventListener("click", e => {
     const b = e.target.closest("[data-k]");
     if (!b || !draft) return;
@@ -529,10 +587,143 @@ import "./fx.js";
     mark($("patternPicker"), a.pattern);
     mark($("ribbonPicker"), a.ribbon);
     mark($("stylePicker"), a.ribbonStyle);
+    mark($("bowPicker"), a.bow);
+    mark($("decoPicker"), a.deco);
     $("paperName").textContent = W.PAPERS[a.paper].name;
     $("patternName").textContent = W.PATTERNS[a.pattern].name;
     $("ribbonName").textContent = W.RIBBONS[a.ribbon].name;
+    $("decoName").textContent = a.deco === "none" ? "" : W.DECOS[a.deco].name;
+    // pattern colour + strength (nothing to colour on plain paper)
+    const ink = W.inkOf(a);
+    $("inkRow").hidden = a.pattern === "plain";
+    buildInks();
+    mark($("inkPicker"), ink.key);
+    $("inkName").textContent = W.INKS[ink.key].name;
+    $("fOpacity").value = ink.opacity;
+    $("opacityOut").textContent = `${ink.opacity} %`;
+    $("fOpacity").style.setProperty("--fill", `${(ink.opacity - W.OPACITY.min) / (W.OPACITY.max - W.OPACITY.min) * 100}%`);
   }
+
+  /* ---------- photo / postcard ---------- */
+  let photoUpload = null;   // { progress } | { error }
+  const PHOTO_MAX = 1600;   // px, longer side
+
+  /** Downscales in the browser: smaller upload, and the re-encode drops EXIF (incl. GPS position) */
+  async function shrinkImage(file) {
+    let bmp;
+    try { bmp = await createImageBitmap(file, { imageOrientation: "from-image" }); }
+    catch { throw new Error(`„${file.name}“ se nepodařilo otevřít. Zkus fotku ve formátu JPEG nebo PNG.`); }
+    const k = Math.min(1, PHOTO_MAX / Math.max(bmp.width, bmp.height));
+    const w = Math.round(bmp.width * k), h = Math.round(bmp.height * k);
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);          // transparent PNG → white, not black
+    ctx.drawImage(bmp, 0, 0, w, h);
+    bmp.close?.();
+    const blob = await new Promise(r => c.toBlob(r, "image/jpeg", .86));
+    if (!blob) throw new Error("Fotku se nepodařilo zpracovat.");
+    return { blob, w, h };
+  }
+
+  async function uploadPhoto(file) {
+    if (!file) return;
+    if (file.type && !file.type.startsWith("image/")) { photoUpload = { error: `„${file.name}“ není obrázek.` }; renderPhoto(); return; }
+    photoUpload = { progress: 0 };
+    renderPhoto(); updateDirty();
+    let img;
+    try { img = await shrinkImage(file); }
+    catch (err) { photoUpload = { error: err.message }; renderPhoto(); updateDirty(); return; }
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "api/admin/files");
+    xhr.setRequestHeader("X-Admin", "1");
+    xhr.setRequestHeader("X-File-Name", encodeURIComponent(file.name.replace(/\.[^.]+$/, "") + ".jpg"));
+    xhr.setRequestHeader("X-Image-Width", String(img.w));
+    xhr.setRequestHeader("X-Image-Height", String(img.h));
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.upload.onprogress = e => {
+      if (!e.lengthComputable || !photoUpload) return;
+      photoUpload.progress = e.loaded / e.total;
+      const bar = $("photoArea").querySelector(".progress i");
+      if (bar) bar.style.width = `${Math.round(photoUpload.progress * 100)}%`;
+    };
+    xhr.onload = () => {
+      let data = null;
+      try { data = JSON.parse(xhr.responseText); } catch { /* not json */ }
+      if (xhr.status === 201 && data?.id) {
+        photoUpload = null;
+        draft.photo = { file: { id: data.id, name: data.name, size: data.size, type: data.type, w: data.w, h: data.h }, caption: draft.photo?.caption || "", frame: draft.photo?.frame || "polaroid" };
+        toast("Fotka nahraná. Nezapomeň box uložit.");
+      } else if (xhr.status === 401) {
+        photoUpload = null;
+        showLogin("Přihlášení vypršelo. Přihlas se prosím znovu.");
+        return;
+      } else {
+        photoUpload = { error: data?.message || (xhr.status === 413 ? "Fotka je na server příliš velká." : `Nahrání se nepovedlo (chyba ${xhr.status}).`) };
+      }
+      renderPhoto(); updateDirty();
+    };
+    xhr.onerror = () => { photoUpload = { error: "Nahrání se nepovedlo. Zkontroluj připojení." }; renderPhoto(); updateDirty(); };
+    xhr.send(img.blob);
+  }
+
+  function renderPhoto() {
+    const area = $("photoArea"), p = draft.photo;
+    if (photoUpload && !photoUpload.error) {
+      area.innerHTML = `<div class="photo-drop busy"><span>Zmenšuju a nahrávám fotku…</span><span class="progress"><i style="width:${Math.round((photoUpload.progress || 0) * 100)}%"></i></span></div>`;
+      return;
+    }
+    const err = photoUpload?.error ? `<p class="photo-err" role="alert">${esc(photoUpload.error)}</p>` : "";
+    if (!p) {
+      area.innerHTML = `<button type="button" class="photo-drop" id="photoPick">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-8 8"/></svg>
+          <span><b>Vložit fotku</b> nebo ji sem přetáhni</span>
+          <small>JPEG, PNG nebo WebP. Zmenšíme ji a odstraníme z ní údaje o místě pořízení.</small>
+        </button>${err}`;
+    } else {
+      const src = `api/admin/files/${encodeURIComponent(p.file.id)}`;
+      area.innerHTML = `<div class="photo-edit">
+          <figure class="photo-thumb ${p.frame}"><img src="${src}" alt="" loading="lazy"></figure>
+          <div class="photo-fields">
+            <div class="picker">
+              <span class="label">Podoba</span>
+              <div class="segmented" id="frameSeg" role="radiogroup" aria-label="Podoba fotky">
+                ${Object.entries(W.PHOTO_FRAMES).map(([k, n]) => `<button type="button" role="radio" data-k="${k}" aria-checked="${k === p.frame}">${esc(n)}</button>`).join("")}
+              </div>
+            </div>
+            <div class="field">
+              <label class="label" for="fCaption">${p.frame === "postcard" ? "Věnování na pohled" : "Popisek pod fotkou"}</label>
+              <input id="fCaption" class="input" type="text" maxlength="200" placeholder="${p.frame === "postcard" ? "např. Ať se ti splní, co si přeješ" : "např. Krkonoše, léto 2025"}">
+            </div>
+            <div class="photo-actions">
+              <button type="button" class="chip" id="photoReplace">Vyměnit fotku</button>
+              <button type="button" class="chip danger" id="photoRemove">Odebrat</button>
+            </div>
+          </div>
+        </div>${err}`;
+      $("fCaption").value = p.caption;
+      $("fCaption").addEventListener("input", e => { draft.photo.caption = e.target.value; updateDirty(); });
+      $("frameSeg").addEventListener("click", e => {
+        const b = e.target.closest("[data-k]");
+        if (!b) return;
+        draft.photo.frame = b.dataset.k;
+        renderPhoto(); updateDirty();
+      });
+      $("photoReplace").addEventListener("click", () => $("photoInput").click());
+      $("photoRemove").addEventListener("click", () => { draft.photo = null; photoUpload = null; renderPhoto(); updateDirty(); });
+    }
+    $("photoPick")?.addEventListener("click", () => $("photoInput").click());
+  }
+  $("photoInput").addEventListener("change", e => { const f = e.target.files?.[0]; e.target.value = ""; uploadPhoto(f); });
+  $("photoBlock").addEventListener("dragover", e => { if (draft && e.dataTransfer?.types?.includes("Files")) { e.preventDefault(); $("photoBlock").classList.add("drag"); } });
+  $("photoBlock").addEventListener("dragleave", e => { if (!$("photoBlock").contains(e.relatedTarget)) $("photoBlock").classList.remove("drag"); });
+  $("photoBlock").addEventListener("drop", e => {
+    $("photoBlock").classList.remove("drag");
+    const f = e.dataTransfer?.files?.[0];
+    if (!f || !draft) return;
+    e.preventDefault();
+    uploadPhoto(f);
+  });
 
   let playing = false;
   function play() {
@@ -812,6 +1003,7 @@ import "./fx.js";
   async function save() {
     if (!draft || saving || !isDirty()) return;
     if (Object.values(uploads).some(u => !u.error)) { toast("Počkej, až se PDF nahraje.", true); return; }
+    if (photoUpload && !photoUpload.error) { toast("Počkej, až se fotka nahraje.", true); return; }
     if (pw.on && !cur.hasPassword && !pw.value) {
       $("fPw").classList.add("invalid");
       $("fPw").focus();
@@ -831,7 +1023,8 @@ import "./fx.js";
       manualUnlock: draft.manualUnlock,
       appearance: { ...draft.appearance, seal: draft.appearance.seal.trim() },
       reveal: draft.reveal,
-      items: draft.items.map(i => ({ id: i.id, name: i.name.trim(), description: i.description.trim(), file: i.file ? { id: i.file.id } : null }))
+      items: draft.items.map(i => ({ id: i.id, name: i.name.trim(), description: i.description.trim(), file: i.file ? { id: i.file.id } : null })),
+      photo: draft.photo ? { file: { id: draft.photo.file.id }, caption: draft.photo.caption.trim(), frame: draft.photo.frame } : null
     };
     let newPw = null;
     if (!pw.on && cur.hasPassword) body.password = null;
