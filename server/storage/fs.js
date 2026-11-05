@@ -5,6 +5,7 @@ import path from "node:path";
  * Plain file storage:
  *   data/workshops/<id>.json     workshop (account)
  *   data/keys/<sha256>.json      { id } – finds a workshop by the hash of its secret key
+ *   data/emails/<sha256>.json    { ids } – workshops saved with an e-mail address (lost-link e-mails)
  *   data/gifts/<code>.json       box (has `owner` = workshop id)
  *   data/files/<id>.pdf + .json  uploaded PDF + meta (has `owner`)
  */
@@ -13,7 +14,8 @@ export function fsStorage(dataDir) {
     gifts: path.join(dataDir, "gifts"),
     files: path.join(dataDir, "files"),
     workshops: path.join(dataDir, "workshops"),
-    keys: path.join(dataDir, "keys")
+    keys: path.join(dataDir, "keys"),
+    emails: path.join(dataDir, "emails")
   };
   const ready = Promise.all(Object.values(dirs).map(d => fs.mkdir(d, { recursive: true })));
   const safe = s => typeof s === "string" && /^[\w-]+$/.test(s);
@@ -44,6 +46,13 @@ export function fsStorage(dataDir) {
     async getKeyOwner(hash) { await ready; return safe(hash) ? (await readJson(path.join(dirs.keys, `${hash}.json`)))?.id ?? null : null; },
     async setKeyOwner(hash, id) { await ready; await writeAtomic(path.join(dirs.keys, `${hash}.json`), JSON.stringify({ id })); },
     async deleteKeyOwner(hash) { await ready; if (safe(hash)) await fs.rm(path.join(dirs.keys, `${hash}.json`), { force: true }); },
+    async getEmailOwners(hash) { await ready; return safe(hash) ? (await readJson(path.join(dirs.emails, `${hash}.json`)))?.ids ?? [] : []; },
+    async setEmailOwners(hash, ids) {
+      await ready;
+      if (!safe(hash)) return;
+      const file = path.join(dirs.emails, `${hash}.json`);
+      if (ids.length) await writeAtomic(file, JSON.stringify({ ids })); else await fs.rm(file, { force: true });
+    },
 
     /* gifts */
     async listGiftsByOwner(owner) { await ready; return (await readAll(dirs.gifts)).filter(g => g.owner === owner); },

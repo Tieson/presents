@@ -20,12 +20,15 @@ Přihlášení drží HttpOnly cookie `xd_ws` (rok). Bez ní vrací chráněné 
 
 | Metoda | Cesta | Popis |
 |---|---|---|
-| POST | `workshop` | Založí dílnu. Tělo `{ name?, email?, signupCode? }` (`signupCode` jen pokud je nastavený `SIGNUP_CODE`). Vrátí `{ workshop }` včetně `key` a přihlásí. `400 bad_email`, `403 bad_signup_code`. |
+| GET | `info` | `{ mail, signupCode }`: jestli server posílá e-maily a jestli zakládání chce kód. Bez přihlášení. |
+| POST | `workshop` | Založí dílnu. Tělo `{ name?, email?, signupCode? }` (`signupCode` jen pokud je nastavený `SIGNUP_CODE`). Vrátí `{ workshop, mailed }` včetně `key` a přihlásí. `mailed` = odešel uvítací e-mail s odkazem. `400 bad_email`, `403 bad_signup_code`. |
+| POST | `workshop/recover` | `{ email }`: pošle odkaz do všech dílen s touto adresou. Odpověď je vždy `{ ok: true }`, ať adresa dílnu má, nebo ne. `400 bad_email`, `503 mail_off`. Bez přihlášení. |
 | POST | `workshop/login` | `{ key }` z tajného odkazu `…/dilna#klic=KEY`. Přihlásí, vrátí `{ workshop }`. `401 bad_key`. |
 | POST | `workshop/logout` | Odhlásí toto zařízení. |
 | GET | `workshop` | `{ workshop }` |
 | PUT | `workshop` | `{ name?, email? }` |
-| POST | `workshop/rotate-key` | Nový klíč, starý přestane platit a ostatní zařízení se odhlásí. Vrátí `{ workshop }` s novým `key`. |
+| POST | `workshop/send-link` | Pošle odkaz na uložený e-mail. `{ ok, email }`. `400 no_email`, `429 too_soon` (víc než 1 e-mail za minutu), `502 mail_failed`, `503 mail_off`. |
+| POST | `workshop/rotate-key` | Nový klíč, starý přestane platit a ostatní zařízení se odhlásí. Vrátí `{ workshop, mailed }` s novým `key`. Má-li dílna e-mail, pošle na něj nový odkaz. |
 | DELETE | `workshop` | Smaže dílnu se všemi boxy a PDF. |
 
 `workshop` = `{ id, name, email, key, createdAt, giftCount, usedBytes, limits: { gifts, storageBytes, uploadBytes } }`
@@ -55,9 +58,12 @@ Vyžadují přihlášenou dílnu. Cizí box nebo PDF vrací `404`, jako by neexi
   "keyHash": "<sha256 hex klíče>",
   "keyEnc": "<base64(iv12 | tag16 | AES-256-GCM(klíč))>",
   "usedBytes": 12345,
+  "mailedAt": "…",
   "createdAt": "…", "updatedAt": "…"
 }
 ```
+
+Index e-mailů pro obnovu odkazu: `sha256("email|" + email.toLowerCase())` → seznam id dílen (soubory `emails/<hash>.json`, v Redisu hash `<prefix>emails`).
 
 Klíč šifruje AES-256-GCM s klíčem `sha256("xd-key-enc|" + APP_SECRET)`. Formát je stejný v Node i PHP.
 Přihlašovací cookie = `<id>.<exp>.<HMAC(APP_SECRET, "ws|id|keyHash[0..16]|exp")>`, takže výměna klíče zneplatní všechna starší přihlášení.

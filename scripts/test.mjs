@@ -1,18 +1,23 @@
 // npm test           → runs tests/api.mjs against the Node API twice:
 //                      1) file storage, 2) Vercel storage (Redis + Blob) backed by in-memory fakes
 // npm test -- <url>  → runs the same tests against any running backend (e.g. PHP)
+// npm test -- <url> --mail 2525  → also the e-mail tests; the backend must send SMTP to 127.0.0.1:2525,
+//                      have APP_URL=https://darky.example.cz and a 1 s gap between e-mails (MAIL_GAP_SECONDS=1)
 import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { run } from "../tests/api.mjs";
+import { runMail, smtpSink, MAIL_APP_URL } from "../tests/mail.mjs";
 
-const [url] = process.argv.slice(2);
+const args = process.argv.slice(2);
+const url = args.find(a => /^https?:/.test(a));
+const mailPort = args.includes("--mail") ? Number(args[args.indexOf("--mail") + 1] || 2525) : 0;
 let failedTotal = 0;
 
-async function suite(label, base) {
+async function suite(label, base, fn = run) {
   console.log(`\n${label} – ${base}\n`);
-  const { passed, failed } = await run(base);
+  const { passed, failed } = await fn(base);
   console.log(`\n${passed} prošlo, ${failed} selhalo`);
   failedTotal += failed;
 }
@@ -20,6 +25,11 @@ const listen = srv => new Promise(r => srv.listen(0, "127.0.0.1", () => r(`http:
 
 if (url) {
   await suite("API testy", url);
+  if (mailPort) {
+    const sink = await smtpSink(mailPort);
+    await suite(`E-maily (SMTP sink na portu ${mailPort})`, url, b => runMail(b, sink));
+    sink.close();
+  }
 } else {
   process.env.APP_SECRET = "test-secret-0123456789";
   const { createApp, apiPath } = await import("../server/app.js");
@@ -97,6 +107,19 @@ if (url) {
   const body = await r.json();
   check(r.status === 201 && body.workshop?.name === "Přes prefix" && [...hashes.keys()].includes("present:workshops"), "getApp na Vercelu s proměnnými present_… založí dílnu v Redisu");
   redisSrv.close();
+
+  // 4) e-mails: real nodemailer → local SMTP sink
+  const { createMailer, mailConfigFromEnv } = await import("../server/mail.js");
+  const sink = await smtpSink();
+  const mcfg = mailConfigFromEnv({ SMTP_HOST: "127.0.0.1", SMTP_PORT: String(sink.port), SMTP_SECURE: "none", SMTP_USER: "dilna", SMTP_PASS: "heslo", MAIL_FROM: "Ježíškova dílna <dilna@example.cz>", APP_URL: MAIL_APP_URL + "/" });
+  check(mailConfigFromEnv({ SMTP_HOST: "x", MAIL_FROM: "a@b.cz" }) === null, "bez APP_URL zůstanou e-maily vypnuté");
+  const tmp2 = fs.mkdtempSync(path.join(os.tmpdir(), "xd-mail-"));
+  const s3 = serve(createApp({ storage: fsStorage(tmp2), secret: process.env.APP_SECRET, mailer: createMailer(mcfg), mailGapMs: 1000 }));
+  await suite("Node + e-maily (nodemailer → SMTP sink)", await listen(s3), b => runMail(b, sink));
+  check(sink.messages.length >= 5, `SMTP sink přijal ${sink.messages.length} e-mailů`);
+  const left = ["workshops", "keys", "emails"].map(d => fs.readdirSync(path.join(tmp2, d)).length).reduce((a, b) => a + b, 0);
+  check(left === 0, left ? `po smazání zůstalo ${left} souborů` : "po smazání dílen nezůstal žádný index e-mailů");
+  s3.close(); sink.close(); fs.rmSync(tmp2, { recursive: true, force: true });
 }
 
 process.exit(failedTotal ? 1 : 0);

@@ -430,3 +430,12 @@ h1 em { display: block; font-style: italic; font-weight: 500; font-size: 1.3em; 
 /* very low screens (iPhone SE): the placeholder already shows what a code looks like */
 .tiny .code-help { display: none; }
 .short .tag-link { padding-top: 4px; }
+.cta-mail { width: min(340px, 100%); display: flex; flex-direction: column; gap: 6px; }
+.cta-input {
+  width: 100%; font: 400 16px/1.2 var(--f-body); color: var(--cream); text-align: center;
+  background: rgba(0,0,0,.18); border: 0; border-bottom: 1px solid rgba(214,178,106,.45);
+  padding: 12px 8px; border-radius: 3px 3px 0 0; outline: none;
+}
+.cta-input::placeholder { color: rgba(183,178,154,.7); }
+.cta-input:focus { border-bottom-color: var(--gold); background: rgba(0,0,0,.28); }
+.cta-note { margin: 0; font-size: 12px; color: var(--muted); }

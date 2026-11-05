@@ -16,7 +16,8 @@
     "test": "node scripts/test.mjs"
   },
   "dependencies": {
-    "@vercel/blob": "2.8.2"
+    "@vercel/blob": "2.8.2",
+    "nodemailer": "10.3.1"
   },
   "devDependencies": {
     "vite": "^8.3.4"

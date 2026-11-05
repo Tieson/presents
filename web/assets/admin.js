@@ -65,6 +65,17 @@ import "./fx.js";
 
   /* ---------- workshop: create / open with the secret link / account ---------- */
   let ws = null;                                   // current workshop { id, name, email, key, … }
+
+  /* what the server can do (e-mails are optional) */
+  let info = { mail: false };
+  rawApi("info").then(i => { info = i || info; applyInfo(); }, () => {});
+  function applyInfo() {
+    if (!info.mail) return;
+    $("cEmailHint").textContent = "Pošleme ti na něj odkaz do dílny, ať o něj nepřijdeš. Nic jiného ti posílat nebudeme.";
+    $("lostBtn").hidden = false;
+    $("aEmail").placeholder = "kam poslat odkaz do dílny";
+    $("aEmailHint").hidden = false;
+  }
   const linkFor = key => `${appBase()}dilna#klic=${key}`;
 
   /** Accepts the whole link (…/dilna#klic=KEY), "klic=KEY" or just the key */
@@ -107,6 +118,8 @@ import "./fx.js";
         const res = await rawApi("workshop", { method: "POST", admin: true, body });
         setWorkshop(res.workshop);
         $("createdLink").textContent = linkFor(res.workshop.key);
+        $("createdMailed").hidden = !res.mailed;
+        if (res.mailed) $("createdMailed").textContent = `Odkaz jsme ti poslali i na ${res.workshop.email}. Kdyby nedorazil, mrkni do spamu. I tak si ho radši ulož.`;
         $("createdSaved").checked = false;
         $("createdGo").disabled = true;
         showScreen("created");
@@ -152,11 +165,39 @@ import "./fx.js";
     });
   });
 
+  /* lost link → e-mail */
+  function showLost(on) {
+    $("loginForm").hidden = on;
+    $("lostForm").hidden = !on;
+    $("loginMsg").textContent = "";
+    $("loginMsg").classList.remove("ok");
+    setTimeout(() => (on ? $("lostEmail") : $("loginKey")).focus(), 30);
+  }
+  $("lostBtn").addEventListener("click", () => showLost(true));
+  $("lostBack").addEventListener("click", () => showLost(false));
+  $("lostForm").addEventListener("submit", e => {
+    e.preventDefault();
+    const email = $("lostEmail").value.trim();
+    const msg = $("loginMsg");
+    msg.classList.remove("ok");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { msg.textContent = "Napiš e-mail, který máš u dílny uložený."; $("lostEmail").focus(); return; }
+    busy($("lostSend"), async () => {
+      try {
+        await rawApi("workshop/recover", { method: "POST", admin: true, body: { email } });
+        msg.textContent = `Pokud k adrese ${email} patří nějaká dílna, odkaz už ti letí e-mailem. Mrkni i do spamu.`;
+        msg.classList.add("ok");
+      } catch (err) {
+        msg.textContent = err.message;
+      }
+    });
+  });
+
   /* account panel */
   function fillAccount() {
     $("acctLink").textContent = ws.key ? linkFor(ws.key) : "Odkaz se nepodařilo načíst.";
     $("aName").value = ws.name || "";
     $("aEmail").value = ws.email || "";
+    $("acctSend").hidden = !(info.mail && ws.email);
     const L = ws.limits || {};
     $("acctUsage").textContent = `Boxy ${ws.giftCount ?? list.length} z ${L.gifts ?? "?"} · PDF ${formatSize(ws.usedBytes || 0)} z ${formatSize(L.storageBytes || 0)}`;
   }
@@ -191,9 +232,16 @@ import "./fx.js";
       const res = await api("workshop/rotate-key", { method: "POST" });
       setWorkshop(res.workshop);
       fillAccount();
-      toast("Máš nový odkaz. Ulož si ho.");
+      toast(res.mailed ? `Máš nový odkaz. Poslali jsme ti ho i na ${res.workshop.email}.` : "Máš nový odkaz. Ulož si ho.");
     } catch (err) { if (err.status !== 401) toast(err.message, true); }
   });
+
+  $("acctSend").addEventListener("click", () => busy($("acctSend"), async () => {
+    try {
+      const res = await api("workshop/send-link", { method: "POST" });
+      toast(`Odkaz jsme poslali na ${res.email}`);
+    } catch (err) { if (err.status !== 401) toast(err.message, true); }
+  }));
 
   $("logout").addEventListener("click", async () => {
     if (isDirty() && !(await confirmDialog({ title: "Odhlásit bez uložení?", text: "Neuložené změny v boxu se ztratí.", ok: "Odhlásit" }))) return;
@@ -914,7 +962,9 @@ import "./fx.js";
       return;
     }
     // …/dilna#nova comes from "Zabalit dárek" on the landing page and after unwrapping
-    const wantNew = location.hash === "#nova";
+    // #nova=<e-mail>: the address typed under "Zabalit svůj dárek" after unwrapping
+    const wantNew = /^#nova(=|$)/.test(location.hash);
+    if (wantNew) { try { $("cEmail").value = decodeURIComponent(location.hash.slice(6)).slice(0, 200); } catch { /* ignore */ } }
     if (wantNew) history.replaceState(null, "", location.pathname + location.search);
     try {
       setWorkshop((await rawApi("workshop", { admin: true })).workshop);

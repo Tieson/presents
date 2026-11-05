@@ -8,6 +8,9 @@
  *
  * Data: JSON files in DATA_DIR
  *   workshops/<id>.json   keys/<sha256>.json   gifts/<code>.json   files/<id>.pdf + <id>.json
+ *   emails/<sha256>.json  (workshops saved with an e-mail address, for lost-link e-mails)
+ *
+ * E-mails (optional): SMTP_HOST + MAIL_FROM + APP_URL in config.php, see config.sample.php.
  */
 declare(strict_types=1);
 
@@ -24,6 +27,20 @@ $MAX_UPLOAD = (int) cfg($config, 'MAX_UPLOAD_MB', 15) * 1024 * 1024;
 $MAX_GIFTS = (int) cfg($config, 'MAX_GIFTS', 50);
 $MAX_STORAGE = (int) cfg($config, 'MAX_STORAGE_MB', 100) * 1024 * 1024;
 $SIGNUP_CODE = trim((string) cfg($config, 'SIGNUP_CODE', ''));
+$MAIL = [
+    'transport' => strtolower((string) cfg($config, 'MAIL_TRANSPORT', 'smtp')),   // smtp | mail (PHP mail())
+    'host' => trim((string) cfg($config, 'SMTP_HOST', '')),
+    'port' => (int) cfg($config, 'SMTP_PORT', 587),
+    'secure' => strtolower((string) cfg($config, 'SMTP_SECURE', '')),             // tls | starttls | none
+    'user' => (string) cfg($config, 'SMTP_USER', ''),
+    'pass' => (string) cfg($config, 'SMTP_PASS', ''),
+    'from' => trim((string) cfg($config, 'MAIL_FROM', '')),
+    'replyTo' => trim((string) cfg($config, 'MAIL_REPLY_TO', '')),
+    'appUrl' => rtrim(trim((string) cfg($config, 'APP_URL', '')), '/'),
+    'gap' => (int) cfg($config, 'MAIL_GAP_SECONDS', 60),
+];
+if ($MAIL['secure'] === '') $MAIL['secure'] = $MAIL['port'] === 465 ? 'tls' : 'starttls';
+$MAIL['enabled'] = $MAIL['from'] !== '' && $MAIL['appUrl'] !== '' && ($MAIL['host'] !== '' || $MAIL['transport'] === 'mail');
 
 const WS_COOKIE = 'xd_ws';
 const WS_TTL = 31536000;     // stays signed in on a device for a year
@@ -163,7 +180,8 @@ $GIFTS = $DATA_DIR . '/gifts';
 $FILES = $DATA_DIR . '/files';
 $WORKSHOPS = $DATA_DIR . '/workshops';
 $KEYS = $DATA_DIR . '/keys';
-foreach ([$GIFTS, $FILES, $WORKSHOPS, $KEYS] as $d) if (!is_dir($d)) @mkdir($d, 0775, true);
+$EMAILS = $DATA_DIR . '/emails';
+foreach ([$GIFTS, $FILES, $WORKSHOPS, $KEYS, $EMAILS] as $d) if (!is_dir($d)) @mkdir($d, 0775, true);
 if (!is_file($DATA_DIR . '/.htaccess')) @file_put_contents($DATA_DIR . '/.htaccess', "Require all denied\nDeny from all\n");
 
 function safe_name($s): bool { return is_string($s) && (bool) preg_match('/^[\w-]+$/', $s); }
@@ -190,6 +208,12 @@ function delete_workshop(string $id): void { global $WORKSHOPS; if (safe_name($i
 function get_key_owner(string $hash): ?string { global $KEYS; $v = safe_name($hash) ? read_json_file("$KEYS/$hash.json") : null; return $v['id'] ?? null; }
 function set_key_owner(string $hash, string $id): void { global $KEYS; write_atomic("$KEYS/$hash.json", json_encode(['id' => $id])); }
 function delete_key_owner(string $hash): void { global $KEYS; if (safe_name($hash)) @unlink("$KEYS/$hash.json"); }
+function get_email_owners(string $hash): array { global $EMAILS; $v = safe_name($hash) ? read_json_file("$EMAILS/$hash.json") : null; return $v['ids'] ?? []; }
+function set_email_owners(string $hash, array $ids): void {
+    global $EMAILS;
+    if (!safe_name($hash)) return;
+    if ($ids) write_atomic("$EMAILS/$hash.json", json_encode(['ids' => array_values($ids)])); else @unlink("$EMAILS/$hash.json");
+}
 
 function get_gift($code): ?array { global $GIFTS; return safe_name($code) ? with_defaults(read_json_file("$GIFTS/$code.json")) : null; }
 function put_gift(array $g): void { global $GIFTS; write_atomic("$GIFTS/{$g['code']}.json", enc($g)); }
@@ -311,6 +335,185 @@ function new_key_for(array &$w): string {
     set_key_owner($w['keyHash'], $w['id']);
     return $key;
 }
+/* ---------- e-mail ---------- */
+
+function email_hash(string $e): string { return hash('sha256', 'email|' . mb_strtolower(trim($e), 'UTF-8')); }
+function index_email(string $id, string $old, string $new): void {
+    if ($old !== '' && ($new === '' || email_hash($old) !== email_hash($new))) {
+        $h = email_hash($old);
+        set_email_owners($h, array_values(array_filter(get_email_owners($h), function ($x) use ($id) { return $x !== $id; })));
+    }
+    if ($new !== '') {
+        $h = email_hash($new);
+        $ids = get_email_owners($h);
+        if (!in_array($id, $ids, true)) { $ids[] = $id; set_email_owners($h, array_slice($ids, -20)); }
+    }
+}
+
+/** Same wording as server/mail.js */
+function link_message(string $kind, string $name, string $link): array {
+    $subject = [
+        'welcome' => "Tvoje Ježíškova dílna „{$name}“",
+        'link' => "Odkaz do dílny „{$name}“",
+        'recover' => "Odkaz do dílny „{$name}“",
+        'rotated' => "Nový odkaz do dílny „{$name}“",
+    ][$kind];
+    $lead = [
+        'welcome' => 'dílna je připravená. Tímhle odkazem se do ní dostaneš z jakéhokoli zařízení:',
+        'link' => 'posíláme odkaz do tvé dílny, jak sis řekl(a):',
+        'recover' => 'někdo (nejspíš ty) požádal o odkaz do dílny s touhle e-mailovou adresou. Tady je:',
+        'rotated' => 'odkaz do dílny byl právě vyměněn za nový. Starý už neplatí. Nový je tady:',
+    ][$kind];
+    $foot = $kind === 'recover'
+        ? 'Pokud jsi o odkaz nežádal(a), tenhle e-mail klidně smaž. Bez odkazu se do dílny nikdo nedostane.'
+        : 'Kdo má odkaz, může dárky upravovat, tak ho nikomu nepřeposílej.';
+    $h = function (string $v): string { return htmlspecialchars($v, ENT_QUOTES, 'UTF-8'); };
+    $text = "Ahoj,\n\n{$lead}\n\n{$link}\n\n{$foot}\n\nVeselé Vánoce\nJežíškova dílna\n";
+    $html = '<!doctype html><html lang="cs"><body style="margin:0;padding:0;background:#05140e">'
+        . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#05140e;padding:32px 12px"><tr><td align="center">'
+        . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#0b241a;border:1px solid #d6b26a;font-family:Georgia,\'Times New Roman\',serif;color:#f3ead6">'
+        . '<tr><td style="padding:36px 32px 8px;text-align:center">'
+        . '<p style="margin:0;font:12px/1 Arial,sans-serif;letter-spacing:4px;text-transform:uppercase;color:#d6b26a">Ježíškova dílna</p>'
+        . '<h1 style="margin:14px 0 0;font-weight:normal;font-style:italic;font-size:30px;line-height:1.15;color:#f6e3ad">' . $h($name) . '</h1>'
+        . '</td></tr>'
+        . '<tr><td style="padding:18px 32px 0;font:16px/1.55 Arial,sans-serif;color:#e8e0cc">Ahoj,<br>' . $h($lead) . '</td></tr>'
+        . '<tr><td align="center" style="padding:24px 32px">'
+        . '<a href="' . $h($link) . '" style="display:inline-block;padding:15px 26px;background:#d6b26a;color:#2a1a10;font:bold 13px/1 Arial,sans-serif;letter-spacing:3px;text-transform:uppercase;text-decoration:none;border-radius:3px">Otevřít dílnu</a>'
+        . '</td></tr>'
+        . '<tr><td style="padding:0 32px;font:12px/1.5 \'Courier New\',monospace;color:#b7b29a;word-break:break-all;text-align:center">' . $h($link) . '</td></tr>'
+        . '<tr><td style="padding:22px 32px 32px;font:13px/1.55 Arial,sans-serif;color:#b7b29a">' . $h($foot) . '<br><br>Veselé Vánoce<br>Ježíškova dílna</td></tr>'
+        . '</table></td></tr></table></body></html>';
+    return [$subject, $text, $html];
+}
+
+/** "=?UTF-8?B?…?=" words, split on character boundaries so no line gets too long */
+function mime_header(string $s): string {
+    if (!preg_match('/[^\x20-\x7E]/', $s)) return $s;
+    $words = []; $cur = '';
+    foreach (preg_split('//u', $s, -1, PREG_SPLIT_NO_EMPTY) as $ch) {
+        if (strlen($cur . $ch) > 45) { $words[] = $cur; $cur = ''; }
+        $cur .= $ch;
+    }
+    if ($cur !== '') $words[] = $cur;
+    return implode("\r\n ", array_map(function ($w) { return '=?UTF-8?B?' . base64_encode($w) . '?='; }, $words));
+}
+/** "Ježíškova dílna <dilna@example.cz>" → [display header, bare address] */
+function mail_address(string $v): array {
+    if (preg_match('/^\s*(.*?)\s*<([^<>\s]+@[^<>\s]+)>\s*$/u', $v, $m)) {
+        $name = trim($m[1], " \"");
+        return [$name !== '' ? mime_header($name) . " <{$m[2]}>" : $m[2], $m[2]];
+    }
+    return [trim($v), trim($v)];
+}
+
+function build_message(array $mail, string $to, string $subject, string $text, string $html): array {
+    [$fromHeader, $fromAddr] = mail_address($mail['from']);
+    $boundary = 'xd-' . bin2hex(random_bytes(12));
+    $domain = substr(strrchr($fromAddr, '@') ?: '@localhost', 1);
+    $headers = [
+        'Date: ' . date(DATE_RFC2822),
+        'From: ' . $fromHeader,
+        'To: ' . $to,
+        'Subject: ' . mime_header($subject),
+        'Message-ID: <' . bin2hex(random_bytes(16)) . '@' . $domain . '>',
+        'MIME-Version: 1.0',
+        'Content-Type: multipart/alternative; boundary="' . $boundary . '"',
+    ];
+    if ($mail['replyTo'] !== '') $headers[] = 'Reply-To: ' . mail_address($mail['replyTo'])[0];
+    $part = function (string $type, string $body) use ($boundary): string {
+        return "--{$boundary}\r\nContent-Type: {$type}; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n"
+            . rtrim(chunk_split(base64_encode($body), 76, "\r\n")) . "\r\n";
+    };
+    $body = $part('text/plain', $text) . $part('text/html', $html) . "--{$boundary}--\r\n";
+    return [$headers, $body, $fromAddr, $domain];
+}
+
+/** Minimal SMTP client: implicit TLS (465) or STARTTLS (587), AUTH PLAIN / LOGIN. Throws on error. */
+function smtp_send(array $mail, string $to, string $subject, string $text, string $html): void {
+    [$headers, $body, $fromAddr, $domain] = build_message($mail, $to, $subject, $text, $html);
+    $remote = ($mail['secure'] === 'tls' ? 'ssl://' : 'tcp://') . $mail['host'] . ':' . $mail['port'];
+    $ctx = stream_context_create(['ssl' => ['peer_name' => $mail['host'], 'verify_peer' => true, 'verify_peer_name' => true]]);
+    $fp = @stream_socket_client($remote, $errno, $errstr, 10, STREAM_CLIENT_CONNECT, $ctx);
+    if (!$fp) throw new RuntimeException("SMTP: nepodařilo se připojit k {$mail['host']}:{$mail['port']} ({$errstr})");
+    stream_set_timeout($fp, 15);
+    $read = function () use ($fp): array {
+        $all = '';
+        while (($line = fgets($fp, 1024)) !== false) {
+            $all .= $line;
+            if (strlen($line) < 4 || $line[3] === ' ') break;
+        }
+        return [(int) substr($all, 0, 3), $all];
+    };
+    $cmd = function (?string $line, array $expect, string $hide = '') use ($fp, $read): string {
+        if ($line !== null) fwrite($fp, $line . "\r\n");
+        [$code, $resp] = $read();
+        if (!in_array($code, $expect, true)) {
+            throw new RuntimeException('SMTP: ' . ($hide ?: ($line ?? 'spojení')) . ' → ' . trim($resp));
+        }
+        return $resp;
+    };
+    try {
+        $cmd(null, [220]);
+        $ehlo = $cmd('EHLO ' . $domain, [250]);
+        if ($mail['secure'] === 'starttls') {
+            $cmd('STARTTLS', [220]);
+            if (!stream_socket_enable_crypto($fp, true, STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT | (defined('STREAM_CRYPTO_METHOD_TLSv1_3_CLIENT') ? STREAM_CRYPTO_METHOD_TLSv1_3_CLIENT : 0))) {
+                throw new RuntimeException('SMTP: STARTTLS se nepodařilo');
+            }
+            $ehlo = $cmd('EHLO ' . $domain, [250]);
+        }
+        if ($mail['user'] !== '') {
+            if (preg_match('/AUTH[ =][^\r\n]*PLAIN/i', $ehlo)) {
+                $cmd('AUTH PLAIN ' . base64_encode("\0{$mail['user']}\0{$mail['pass']}"), [235], 'AUTH PLAIN');
+            } else {
+                $cmd('AUTH LOGIN', [334]);
+                $cmd(base64_encode($mail['user']), [334], 'AUTH LOGIN (jméno)');
+                $cmd(base64_encode($mail['pass']), [235], 'AUTH LOGIN (heslo)');
+            }
+        }
+        $cmd("MAIL FROM:<{$fromAddr}>", [250]);
+        $cmd("RCPT TO:<{$to}>", [250, 251]);
+        $cmd('DATA', [354]);
+        $data = implode("\r\n", $headers) . "\r\n\r\n" . $body;
+        $data = preg_replace('/^\./m', '..', $data);           // dot-stuffing
+        fwrite($fp, $data . "\r\n.\r\n");
+        $cmd(null, [250], 'DATA');
+        fwrite($fp, "QUIT\r\n");
+    } finally {
+        fclose($fp);
+    }
+}
+
+function send_mail(string $to, array $msg): void {
+    global $MAIL;
+    [$subject, $text, $html] = $msg;
+    if ($MAIL['host'] === '' && $MAIL['transport'] === 'mail') {
+        [$headers, $body, $fromAddr] = build_message($MAIL, $to, $subject, $text, $html);
+        $headers = array_values(array_filter($headers, function ($h) { return strpos($h, 'To: ') !== 0 && strpos($h, 'Subject: ') !== 0; }));
+        if (!mail($to, mime_header($subject), $body, implode("\r\n", $headers), '-f' . $fromAddr)) throw new RuntimeException('mail() selhalo');
+        return;
+    }
+    smtp_send($MAIL, $to, $subject, $text, $html);
+}
+
+/** Sends the secret link; true when it went out. Never throws. */
+function mail_link(array $w, string $kind, ?string $key = null): bool {
+    global $MAIL, $SECRET;
+    if (!$MAIL['enabled'] || ($w['email'] ?? '') === '') return false;
+    if (!empty($w['mailedAt']) && time() - strtotime((string) $w['mailedAt']) < $MAIL['gap']) return false;
+    $k = $key ?? decrypt_str($SECRET, $w['keyEnc'] ?? '');
+    if (!$k) return false;
+    try {
+        send_mail((string) $w['email'], link_message($kind, (string) $w['name'], $MAIL['appUrl'] . '/dilna#klic=' . $k));
+    } catch (Throwable $e) {
+        error_log("E-mail ({$kind}) se nepodařilo odeslat: " . $e->getMessage());
+        return false;
+    }
+    $fresh = get_workshop($w['id']);
+    if ($fresh) { $fresh['mailedAt'] = now_iso(); put_workshop($fresh); }
+    return true;
+}
+
 function adjust_usage(string $id, int $delta): void {
     $w = get_workshop($id);
     if (!$w) return;
@@ -346,6 +549,10 @@ try {
     // CSRF guard: every state-changing call must come from our own pages (custom header)
     if ($method !== 'GET' && ($seg[0] ?? '') !== 'gifts' && ($_SERVER['HTTP_X_ADMIN'] ?? '') !== '1') {
         fail(403, 'forbidden', 'Chybí hlavička X-Admin.');
+    }
+
+    if (($seg[0] ?? '') === 'info' && count($seg) === 1 && $method === 'GET') {
+        send_json(['mail' => $MAIL['enabled'], 'signupCode' => $SIGNUP_CODE !== '']);
     }
 
     /* ----- public: recipients ----- */
@@ -407,8 +614,10 @@ try {
             $w = ['id' => random_id(9), 'name' => $name !== '' ? $name : 'Moje dílna', 'email' => $email, 'keyHash' => '', 'keyEnc' => '', 'usedBytes' => 0, 'createdAt' => $now, 'updatedAt' => $now];
             $key = new_key_for($w);
             put_workshop($w);
+            index_email($w['id'], '', $email);
+            $mailed = mail_link($w, 'welcome', $key);
             sign_in($w);
-            send_json(['workshop' => workshop_view($w, $key)], 201);
+            send_json(['workshop' => workshop_view($w, $key), 'mailed' => $mailed], 201);
         }
         if (($seg[1] ?? '') === 'login' && $method === 'POST') {
             $b = body_json();
@@ -423,6 +632,20 @@ try {
             send_json(['workshop' => workshop_view($w, $key)]);
         }
         if (($seg[1] ?? '') === 'logout' && $method === 'POST') { sign_out(); send_json(['ok' => true]); }
+        // lost link: same answer whether or not the address has a workshop
+        if (($seg[1] ?? '') === 'recover' && $method === 'POST') {
+            if (!$MAIL['enabled']) fail(503, 'mail_off', 'Posílání e-mailů tady není zapnuté.');
+            $email = clean_email(body_json()['email'] ?? '');
+            if (!$email) fail(400, 'bad_email', 'Napiš e-mailovou adresu, kterou máš u dílny uloženou.');
+            $started = microtime(true);
+            foreach (array_slice(get_email_owners(email_hash($email)), 0, 5) as $id) {
+                $o = get_workshop($id);
+                if ($o && ($o['email'] ?? '') !== '' && email_hash((string) $o['email']) === email_hash($email)) mail_link($o, 'recover');
+            }
+            $left = 0.7 - (microtime(true) - $started);
+            if ($left > 0) usleep((int) ($left * 1e6));
+            send_json(['ok' => true]);
+        }
 
         $w = current_workshop();
         if (!$w) fail(401, 'unauthorized', 'Otevři svou dílnu tajným odkazem.');
@@ -433,10 +656,21 @@ try {
             $email = array_key_exists('email', $b) ? clean_email($b['email']) : $w['email'];
             if ($email === null) fail(400, 'bad_email', 'Tohle nevypadá jako e-mailová adresa.');
             if (array_key_exists('name', $b)) { $n = clean_name($b['name']); $w['name'] = $n !== '' ? $n : 'Moje dílna'; }
+            $oldEmail = (string) ($w['email'] ?? '');
             $w['email'] = $email;
             $w['updatedAt'] = now_iso();
             put_workshop($w);
+            index_email($w['id'], $oldEmail, $email);
             send_json(['workshop' => workshop_view($w)]);
+        }
+        if (($seg[1] ?? '') === 'send-link' && $method === 'POST') {
+            if (!$MAIL['enabled']) fail(503, 'mail_off', 'Posílání e-mailů tady není zapnuté.');
+            if (($w['email'] ?? '') === '') fail(400, 'no_email', 'Nejdřív ulož e-mail, na který odkaz poslat.');
+            if (!empty($w['mailedAt']) && time() - strtotime((string) $w['mailedAt']) < $MAIL['gap']) {
+                fail(429, 'too_soon', 'E-mail jsme poslali před chvílí. Zkus to zase za minutu.');
+            }
+            if (!mail_link($w, 'link')) fail(502, 'mail_failed', 'E-mail se nepodařilo odeslat. Zkus to prosím později.');
+            send_json(['ok' => true, 'email' => $w['email']]);
         }
         if (($seg[1] ?? '') === 'rotate-key' && $method === 'POST') {
             $old = (string) $w['keyHash'];
@@ -444,13 +678,15 @@ try {
             $w['updatedAt'] = now_iso();
             put_workshop($w);
             delete_key_owner($old);
+            $mailed = mail_link(array_merge($w, ['mailedAt' => null]), 'rotated', $key);
             sign_in($w);
-            send_json(['workshop' => workshop_view($w, $key)]);
+            send_json(['workshop' => workshop_view($w, $key), 'mailed' => $mailed]);
         }
         if (count($seg) === 1 && $method === 'DELETE') {
             foreach (gifts_by_owner($w['id']) as $g) delete_gift($g['code']);
             foreach (files_by_owner($w['id']) as $f) delete_file((string) $f['id']);
             delete_key_owner((string) $w['keyHash']);
+            index_email($w['id'], (string) ($w['email'] ?? ''), '');
             delete_workshop($w['id']);
             sign_out();
             send_json(['ok' => true]);

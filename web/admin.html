@@ -37,7 +37,7 @@
         <div class="w-field">
           <label for="cEmail">E-mail <span>nepovinný</span></label>
           <input id="cEmail" class="login-input" type="email" maxlength="200" placeholder="tom@example.cz" autocomplete="email">
-          <p class="w-hint">Zatím ti nic neposíláme. Uložíme ho, abychom ti mohli odkaz připomenout, až to půjde.</p>
+          <p class="w-hint" id="cEmailHint">Zatím ti nic neposíláme. Uložíme ho, abychom ti mohli odkaz připomenout, až to půjde.</p>
         </div>
         <div class="w-field" id="cCodeWrap" hidden>
           <label for="cCode">Kód pro založení</label>
@@ -55,6 +55,19 @@
           <p class="w-hint">Stačí odkaz otevřít, nebo ho sem vlož celý.</p>
         </div>
         <button class="btn" type="submit" id="loginBtn">Otevřít dílnu</button>
+        <button class="w-link" type="button" id="lostBtn" hidden>Ztratil(a) jsem odkaz</button>
+      </form>
+
+      <!-- lost link: shown instead of the sign-in card when e-mails are on -->
+      <form id="lostForm" class="login-card" novalidate hidden>
+        <h2>Ztracený odkaz</h2>
+        <div class="w-field">
+          <label for="lostEmail">E-mail uložený u dílny</label>
+          <input id="lostEmail" class="login-input" type="email" maxlength="200" placeholder="tom@example.cz" autocomplete="email">
+          <p class="w-hint">Pošleme na něj odkaz do všech dílen, které k té adrese patří.</p>
+        </div>
+        <button class="btn" type="submit" id="lostSend">Poslat odkaz</button>
+        <button class="w-link" type="button" id="lostBack">Zpět, odkaz mám</button>
       </form>
     </div>
     <p class="login-msg" id="loginMsg" role="status" aria-live="polite"></p>
@@ -72,6 +85,7 @@
       <code class="mono" id="createdLink"></code>
       <button type="button" class="btn small gold" id="createdCopy">Kopírovat</button>
     </div>
+    <p class="created-mailed" id="createdMailed" hidden></p>
     <ul class="key-rules">
       <li>Ulož si ho do záložek, poznámek nebo si ho pošli e-mailem.</li>
       <li>Kdo ho má, může dárky upravovat. Sdílej ho jen s tím, s kým chceš dílnu spravovat.</li>
@@ -355,6 +369,7 @@
       </div>
       <p class="hint">Kdo ho má, může dárky upravovat. Když unikne, vyměň ho za nový. Starý přestane platit a ostatní zařízení se odhlásí.</p>
       <div class="chips">
+        <button type="button" class="chip" id="acctSend" hidden>Poslat na e-mail</button>
         <button type="button" class="chip" id="acctRotate">Vyměnit za nový odkaz</button>
       </div>
     </section>
@@ -367,6 +382,7 @@
       <div class="field">
         <label for="aEmail" class="label">E-mail (nepovinný)</label>
         <input id="aEmail" class="input" type="email" maxlength="200" placeholder="pro připomenutí odkazu, až to půjde">
+        <p class="hint" id="aEmailHint" hidden>Když odkaz ztratíš, pošleme ti ho sem. Na tuhle adresu přijde i nový odkaz po výměně.</p>
       </div>
       <div class="acct-row">
         <span class="meta-line" id="acctUsage"></span>

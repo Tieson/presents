@@ -359,7 +359,7 @@ import "./fx.js";
       </article>
       ${done && !opened.preview ? ctaHtml() : ""}`;
     $("rewrap").addEventListener("click", rewrap);
-    if (done && !opened.preview) wrapLinks(reveal);
+    if (done && !opened.preview) wireCta();
   }
 
   /* after everything is unwrapped: invite the recipient to wrap a present of their own */
@@ -373,9 +373,28 @@ import "./fx.js";
       <p class="eyebrow ruled">Ježíškova dílna</p>
       <h3 id="ctaTitle">Chceš taky někoho <em>obdarovat?</em></h3>
       <p class="cta-text">Zabal vlastní online dárek: pár překvapení, poukazy v PDF, heslo a čas, kdy půjde rozbalit. Zdarma a bez registrace.</p>
-      <a class="btn gold" href="dilna#nova" data-wrap data-wrap-back="Pokračovat do mé dílny">Zabalit svůj dárek</a>
+      <div class="cta-mail" id="ctaMail" hidden>
+        <label for="ctaEmail" class="visually-hidden">Tvůj e-mail</label>
+        <input id="ctaEmail" class="cta-input" type="email" maxlength="200" placeholder="tvůj e-mail (nepovinný)" autocomplete="email">
+        <p class="cta-note">Pošleme ti na něj odkaz do dílny, ať o něj nepřijdeš.</p>
+      </div>
+      <a class="btn gold" id="ctaGo" href="dilna#nova" data-wrap data-wrap-back="Pokračovat do mé dílny">Zabalit svůj dárek</a>
       <p class="cta-keep">${keep}</p>
     </aside>`;
+  }
+
+  let infoP;
+  const serverInfo = () => (infoP ??= api("info").catch(() => ({})));
+  async function wireCta() {
+    const go = $("ctaGo");
+    // the typed address travels to the workshop's sign-up form (#nova=<e-mail>)
+    go.addEventListener("click", () => {
+      const e = $("ctaEmail").value.trim();
+      if (go.getAttribute("href").startsWith("dilna#nova")) go.href = e ? `dilna#nova=${encodeURIComponent(e)}` : "dilna#nova";
+    });
+    $("ctaEmail").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); go.click(); } });
+    const [w, info] = await Promise.all([wrapLinks(reveal), serverInfo()]);
+    if (!w && info.mail && $("ctaMail")) $("ctaMail").hidden = false;
   }
 
   /* the stage after opening */

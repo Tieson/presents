@@ -3,6 +3,7 @@ import {
   safeEqual, randomId, generateCode, normalizeCode, hmac,
   generateKey, isKeyShaped, sha256hex, encrypt, decrypt
 } from "./security.js";
+import { linkMessage } from "./mail.js";
 
 const WS_COOKIE = "xd_ws";
 const WS_TTL = 60 * 60 * 24 * 365;     // stays signed in on this device for a year
@@ -137,7 +138,8 @@ function pdfResponse(file, meta, download) {
  */
 export function createApp({
   storage, secret, maxUploadBytes = 4 * 1024 * 1024,
-  maxGifts = 50, maxStorageBytes = 100 * 1024 * 1024, signupCode = ""
+  maxGifts = 50, maxStorageBytes = 100 * 1024 * 1024, signupCode = "",
+  mailer = { enabled: false }, mailGapMs = 60 * 1000, log = console
 }) {
   if (!secret) throw new Error("APP_SECRET is not set");
   const SECRET = secret;
@@ -189,6 +191,36 @@ export function createApp({
     const e = str(v, 200).trim();
     return e === "" ? "" : /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) ? e : null;
   }
+  /* ----- e-mail: index (address → workshops) and sending the link ----- */
+  const emailHash = e => sha256hex(`email|${String(e).trim().toLowerCase()}`);
+  async function indexEmail(id, oldEmail, newEmail) {
+    if (oldEmail && (!newEmail || emailHash(oldEmail) !== emailHash(newEmail))) {
+      const h = emailHash(oldEmail);
+      await storage.setEmailOwners(h, (await storage.getEmailOwners(h)).filter(x => x !== id));
+    }
+    if (newEmail) {
+      const h = emailHash(newEmail), ids = await storage.getEmailOwners(h);
+      if (!ids.includes(id)) await storage.setEmailOwners(h, [...ids, id].slice(-20));
+    }
+  }
+  const MAIL_GAP = mailGapMs;              // one e-mail per workshop per minute
+  /** Sends the secret link; returns true when it went out. Never throws. */
+  async function mailLink(w, kind, key) {
+    if (!mailer.enabled || !w.email) return false;
+    if (w.mailedAt && Date.now() - Date.parse(w.mailedAt) < MAIL_GAP) return false;
+    const k = key || decrypt(SECRET, w.keyEnc);
+    if (!k) return false;
+    try {
+      await mailer.send({ to: w.email, ...linkMessage(kind, { name: w.name, link: mailer.linkFor(k) }) });
+    } catch (err) {
+      log.error?.(`E-mail (${kind}) se nepodařilo odeslat: ${err.message}`);
+      return false;
+    }
+    const fresh = await storage.getWorkshop(w.id);
+    if (fresh) await storage.putWorkshop({ ...fresh, mailedAt: new Date().toISOString() });
+    return true;
+  }
+
   async function newKeyFor(w) {
     const key = generateKey();
     w.keyHash = sha256hex(key);
@@ -308,6 +340,11 @@ export function createApp({
       return fail(404, "not_found", "Neznámá cesta.");
     }
 
+    /* ----- what this installation can do ----- */
+    if (seg[0] === "info" && seg.length === 1 && method === "GET") {
+      return json({ mail: !!mailer.enabled, signupCode: !!signupCode });
+    }
+
     /* ----- workshop (account) ----- */
     if (seg[0] === "workshop") {
       // create a new workshop
@@ -323,7 +360,9 @@ export function createApp({
         const w = { id: randomId(9), name: cleanName(b.name) || "Moje dílna", email, keyHash: "", keyEnc: "", usedBytes: 0, createdAt: now, updatedAt: now };
         const key = await newKeyFor(w);
         await storage.putWorkshop(w);
-        return json({ workshop: await workshopView(w, key) }, 201, signIn(req, w));
+        await indexEmail(w.id, "", email);
+        const mailed = await mailLink(w, "welcome", key);
+        return json({ workshop: await workshopView(w, key), mailed }, 201, signIn(req, w));
       }
       // sign in with the secret key from the link
       if (seg[1] === "login" && method === "POST") {
@@ -338,6 +377,20 @@ export function createApp({
         return json({ workshop: await workshopView(w, key) }, 200, signIn(req, w));
       }
       if (seg[1] === "logout" && method === "POST") return json({ ok: true }, 200, signOut(req));
+      // lost link: e-mail it to every workshop saved with this address. The answer is always
+      // the same, so nobody can find out which addresses have a workshop.
+      if (seg[1] === "recover" && method === "POST") {
+        if (!mailer.enabled) return fail(503, "mail_off", "Posílání e-mailů tady není zapnuté.");
+        const email = cleanEmail((await readJson(req)).email);
+        if (!email) return fail(400, "bad_email", "Napiš e-mailovou adresu, kterou máš u dílny uloženou.");
+        const started = Date.now();
+        for (const id of (await storage.getEmailOwners(emailHash(email))).slice(0, 5)) {
+          const w = await storage.getWorkshop(id);
+          if (w?.email && emailHash(w.email) === emailHash(email)) await mailLink(w, "recover");
+        }
+        await sleep(Math.max(0, 700 - (Date.now() - started)));
+        return json({ ok: true });
+      }
 
       const w = await currentWorkshop(req);
       if (!w) return fail(401, "unauthorized", "Otevři svou dílnu tajným odkazem.");
@@ -349,7 +402,17 @@ export function createApp({
         if (email === null) return fail(400, "bad_email", "Tohle nevypadá jako e-mailová adresa.");
         const next = { ...w, name: b.name === undefined ? w.name : (cleanName(b.name) || "Moje dílna"), email, updatedAt: new Date().toISOString() };
         await storage.putWorkshop(next);
+        await indexEmail(w.id, w.email, email);
         return json({ workshop: await workshopView(next) });
+      }
+      if (seg[1] === "send-link" && method === "POST") {
+        if (!mailer.enabled) return fail(503, "mail_off", "Posílání e-mailů tady není zapnuté.");
+        if (!w.email) return fail(400, "no_email", "Nejdřív ulož e-mail, na který odkaz poslat.");
+        if (w.mailedAt && Date.now() - Date.parse(w.mailedAt) < MAIL_GAP) {
+          return fail(429, "too_soon", "E-mail jsme poslali před chvílí. Zkus to zase za minutu.");
+        }
+        if (!(await mailLink(w, "link"))) return fail(502, "mail_failed", "E-mail se nepodařilo odeslat. Zkus to prosím později.");
+        return json({ ok: true, email: w.email });
       }
       if (seg[1] === "rotate-key" && method === "POST") {
         const oldHash = w.keyHash;
@@ -357,12 +420,14 @@ export function createApp({
         const key = await newKeyFor(next);
         await storage.putWorkshop(next);
         await storage.deleteKeyOwner(oldHash);
-        return json({ workshop: await workshopView(next, key) }, 200, signIn(req, next));
+        const mailed = await mailLink({ ...next, mailedAt: null }, "rotated", key);
+        return json({ workshop: await workshopView(next, key), mailed }, 200, signIn(req, next));
       }
       if (seg.length === 1 && method === "DELETE") {
         for (const g of await storage.listGiftsByOwner(w.id)) await storage.deleteGift(g.code);
         for (const f of await storage.listFilesByOwner(w.id)) await storage.deleteFile(f.id);
         await storage.deleteKeyOwner(w.keyHash);
+        await indexEmail(w.id, w.email, "");
         await storage.deleteWorkshop(w.id);
         return json({ ok: true }, 200, signOut(req));
       }

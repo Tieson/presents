@@ -4,6 +4,7 @@
  *    Keys start with `keyPrefix` (REDIS_KEY_PREFIX, default "xd:"), so the database can be shared.
  *      xd:workshops  hash  id → workshop JSON
  *      xd:keys       hash  sha256(secret key) → workshop id
+ *      xd:emails     hash  sha256(e-mail) → JSON array of workshop ids (lost-link e-mails)
  *      xd:gifts      hash  code → box JSON          xd:own:<id>   set of the workshop's box codes
  *      xd:files      hash  id → PDF meta JSON       xd:ownf:<id>  set of the workshop's file ids
  *  - PDF files in a *private* Vercel Blob store; files are always streamed
@@ -40,6 +41,11 @@ export function vercelStorage({ redisUrl, redisToken, blobToken, blobAccess = "p
     async getKeyOwner(hash) { return (await redis("HGET", K("keys"), hash)) || null; },
     async setKeyOwner(hash, id) { await redis("HSET", K("keys"), hash, id); },
     async deleteKeyOwner(hash) { await redis("HDEL", K("keys"), hash); },
+    async getEmailOwners(hash) { return parse(await redis("HGET", K("emails"), hash)) || []; },
+    async setEmailOwners(hash, ids) {
+      if (ids.length) await redis("HSET", K("emails"), hash, JSON.stringify(ids));
+      else await redis("HDEL", K("emails"), hash);
+    },
 
     /* gifts */
     async listGiftsByOwner(owner) {

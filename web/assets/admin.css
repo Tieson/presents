@@ -579,3 +579,17 @@ textarea.input { resize: vertical; min-height: 96px; }
   .keybox { flex-direction: column; align-items: stretch; }
   #accountBtn span { display: none; }
 }
+
+/* ---------- e-mails ---------- */
+.w-link {
+  appearance: none; background: none; border: 0; cursor: pointer; align-self: center;
+  font: 400 13px/1 var(--f-body); color: var(--muted);
+  text-decoration: underline; text-underline-offset: 3px; padding: 4px;
+}
+.w-link:hover { color: var(--gold-light); }
+.w-link:focus-visible { outline: 1px solid var(--gold); outline-offset: 3px; }
+.login-msg.ok { color: var(--gold-light); }
+.created-mailed {
+  margin: 0; padding: 10px 14px; font-size: 14px; color: var(--gold-light);
+  border: 1px solid var(--line-gold); border-radius: 4px; text-align: left;
+}

@@ -15,17 +15,19 @@ zadá heslo a ve stanovený čas si dárek „rozbalí“. Dárky se balí v **J
 - **Vzhled krabice:** 8 papírů, 6 vzorů (hladký, proužky, puntíky, hvězdičky, vločky, kostka), 6 barev stuhy, převázání do kříže nebo jednou stuhou a pečeť s iniciálami. Živý náhled v dílně, ikonky v seznamu boxů mají stejné barvy.
 - **Rozbalování:** najednou, postupně (každá položka je malá krabička) nebo ať si vybere příjemce. Postup se příjemci pamatuje i po zavření stránky. „Zabalit znovu“ ho vynuluje.
 - Náhled jako příjemce pro přihlášeného tvůrce (obejde heslo i zámek).
+- **Úvodní stránka** je rozcestník: „Zabalit dárek“ (→ dílna) nebo „Mám kód dárku“. Po rozbalení celého dárku příjemce uvidí pozvánku zabalit vlastní dárek a tip uložit si stránku do záložek.
+- **E-maily s odkazem do dílny (nepovinné, přes SMTP).** Po založení přijde odkaz e-mailem. V dílně ho jde poslat znovu a po výměně přijde nový. Kdo odkaz ztratí, nechá si ho poslat na uložený e-mail. Bez nastaveného SMTP se e-mail jen uloží a nic se neposílá.
 
 ## Struktura
 
 ```
 web/                 frontend (Vite): index.html = příjemce, admin.html = dílna, assets/
 api/index.js         Vercel serverless funkce – vstup pro celé /api/*
-server/              Node backend: app.js (API), security.js, storage/ (fs | Upstash+Blob),
+server/              Node backend: app.js (API), security.js, mail.js (SMTP), storage/ (fs | Upstash+Blob),
                      standalone.js (vlastní server), node-adapter.js, env.js
 php/                 PHP backend se stejným API (PHP 7.4+, Apache + mod_rewrite)
 scripts/             build-php.mjs, test.mjs
-tests/api.mjs        end-to-end testy API (běží proti Node i PHP)
+tests/               end-to-end testy API a e-mailů (běží proti Node i PHP)
 vite.config.js       build + dev server s API
 vercel.json          nastavení Vercelu (build, přepisy adres, hlavičky)
 ```
@@ -87,13 +89,31 @@ npm start                # http://localhost:3000, data v ./data
 
 Za reverzní proxy (nginx, Caddy) posílej `X-Forwarded-Proto`, aby cookie dostala příznak `Secure`.
 
+## E-maily (SMTP)
+
+Nepovinné. Zapnou se, když jsou nastavené `SMTP_HOST`, `MAIL_FROM` a `APP_URL`. Stačí obyčejná schránka u hostingu.
+
+| Proměnná | Příklad | |
+|---|---|---|
+| `APP_URL` | `https://darky.example.cz` | veřejná adresa webu, z ní se skládá odkaz v e-mailu |
+| `MAIL_FROM` | `Ježíškova dílna <dilna@example.cz>` | odesílatel, ideálně adresa z vlastní domény (kvůli SPF/DKIM) |
+| `SMTP_HOST` | `smtp.example.cz` | |
+| `SMTP_PORT` | `465` | 465 = TLS, 587 = STARTTLS |
+| `SMTP_SECURE` | | prázdné = podle portu, jinak `tls` / `starttls` / `none` |
+| `SMTP_USER`, `SMTP_PASS` | | přihlášení ke schránce |
+| `MAIL_REPLY_TO` | | nepovinné |
+
+V PHP se to samé vyplní v `config.php`. Když hosting SMTP nenabízí, jde v PHP nastavit `MAIL_TRANSPORT => 'mail'` (funkce `mail()`). Node verze posílá přes [nodemailer](https://nodemailer.com/), PHP má vlastního malého SMTP klienta bez závislostí. Texty e-mailů jsou v `server/mail.js` a `php/api.php` (stejné znění).
+
+Test: `npm test` vyzkouší e-maily proti lokálnímu SMTP serveru. Pro PHP spusť server s `SMTP_HOST=127.0.0.1 SMTP_PORT=2525 SMTP_SECURE=none APP_URL=https://darky.example.cz MAIL_GAP_SECONDS=1 MAIL_FROM=…` a pak `npm test -- http://127.0.0.1:8080 --mail 2525`.
+
 ## Bezpečnost v kostce
 
 - Dílny: tajný klíč má 192 bitů náhody. Server si ukládá jeho otisk (SHA-256) pro vyhledání a kopii šifrovanou AES-256-GCM klíčem odvozeným z `APP_SECRET`, aby šel odkaz v dílně znovu ukázat. Klíč je v části adresy za `#`, takže se neposílá na server v adrese a nezůstane v jeho logech. Po přihlášení ho stránka z adresního řádku hned odstraní.
 - Přihlášení: podepsaná HttpOnly cookie na rok. Výměnou odkazu se zneplatní všechna ostatní přihlášení. Hlavička `X-Admin` chrání proti CSRF.
 - Každá dílna vidí jen svoje boxy a PDF. Cizí box vypadá stejně jako neexistující (404).
 - Limity na dílnu: `MAX_GIFTS` boxů (50) a `MAX_STORAGE_MB` místa na PDF (100 MB). Volitelný `SIGNUP_CODE` omezí zakládání dílen.
-- E-mail se zatím jen ukládá, nic se neposílá.
+- E-maily: adresa pro odkazy v e-mailu se bere jen z `APP_URL`, nikdy z hlavičky `Host`. Obnova ztraceného odkazu odpoví vždy stejně, takže nejde zjistit, které adresy mají dílnu. Jedna dílna dostane nejvýš jeden e-mail za minutu.
 - Hesla k dárkům: PBKDF2-SHA256, 210 000 iterací. Špatný pokus server zdrží o 0,6 s.
 - Kód má 12 písmen ze 70 slabik, tedy zhruba 10¹¹ kombinací. Dárek bez hesla je chráněný jen tímhle kódem.
 - Při změně hesla nebo kódu přestanou platit dřív vydané odkazy na PDF.
