@@ -913,11 +913,15 @@ import "./fx.js";
       }
       return;
     }
+    // …/dilna#nova comes from "Zabalit dárek" on the landing page and after unwrapping
+    const wantNew = location.hash === "#nova";
+    if (wantNew) history.replaceState(null, "", location.pathname + location.search);
     try {
       setWorkshop((await rawApi("workshop", { admin: true })).workshop);
       showApp();
     } catch (err) {
       showLogin(err.status === 401 ? "" : err.message);
+      if (wantNew && err.status === 401) setTimeout(() => $("cName").focus({ preventScroll: true }), 60);
     }
   })();
 })();

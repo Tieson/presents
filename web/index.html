@@ -55,11 +55,20 @@
     <div class="tag" id="tag">
       <div class="tag-inner">
 
+        <!-- Landing (no gift code in the address): wrap a present, or unwrap one by its code -->
+        <div id="hubState" class="tag-state" hidden>
+          <p class="tag-title">Balíš, nebo rozbaluješ?</p>
+          <p class="tag-note" id="hubNote">Zabal blízkým online dárek s poukazy v PDF. Zdarma a bez registrace.</p>
+          <a class="btn" id="hubWrap" href="dilna#nova" data-wrap>Zabalit dárek</a>
+          <button class="tag-link" type="button" id="hubCode">Mám kód dárku</button>
+        </div>
+
         <form id="codeForm" class="tag-state" autocomplete="off" novalidate hidden>
           <label for="codeInput" class="tag-title">Kód dárku</label>
-          <p class="tag-note">Najdeš ho v odkazu nebo na přáníčku. Třeba <span class="mono">bekalo-mitusa</span>.</p>
+          <p class="tag-note code-help">Najdeš ho v odkazu nebo na přáníčku. Třeba <span class="mono">bekalo-mitusa</span>.</p>
           <input id="codeInput" class="tag-input mono" type="text" inputmode="latin" placeholder="xxxxxx-xxxxxx" spellcheck="false" autocapitalize="off" maxlength="20">
           <button class="btn" type="submit">Najít dárek</button>
+          <button class="tag-link" type="button" id="codeBack">Chci dárek zabalit</button>
         </form>
 
         <div id="loadingState" class="tag-state loading">

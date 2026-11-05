@@ -19,6 +19,7 @@ import "./fx.js";
     pinned = h; width = w;
     root.style.setProperty("--vh", `${h}px`);
     root.classList.toggle("short", h < 700);
+    root.classList.toggle("tiny", h < 600);
     // phone on its side: wider than tall and low → side-by-side layout with a squeezed heading
     root.classList.toggle("land", w > h && h < 540);
     window.dispatchEvent(new CustomEvent("xd:vh", { detail: h }));
@@ -39,7 +40,7 @@ import "./fx.js";
 
   const stage = $("stage"), present = $("present"), gift = $("gift"), tag = $("tag"), msg = $("msg");
   const unwrap = $("unwrap"), peek = $("peek"), reveal = $("reveal");
-  const states = { code: $("codeForm"), loading: $("loadingState"), locked: $("lockedState"), open: $("openForm") };
+  const states = { hub: $("hubState"), code: $("codeForm"), loading: $("loadingState"), locked: $("lockedState"), open: $("openForm") };
 
   const params = new URLSearchParams(location.search);
   const preview = params.has("preview");
@@ -109,11 +110,45 @@ import "./fx.js";
     else el.innerHTML = "Krásné <b>vánoční svátky</b>";
   }
 
+  /* ---------- the visitor's own workshop (session cookie), asked once ---------- */
+  let mine;
+  const myWorkshop = () => (mine ??= api("workshop").then(r => r.workshop, () => null));
+  /** "Zabalit dárek" → the workshop; someone who already has one goes straight back to it */
+  async function wrapLinks(root = document) {
+    const w = await myWorkshop();
+    if (!w) return;
+    root.querySelectorAll("[data-wrap]").forEach(a => {
+      a.href = "dilna";
+      a.textContent = a.dataset.wrapBack || "Pokračovat do dílny";
+    });
+    return w;
+  }
+
   /* ---------- states ---------- */
+  const LEDE = "Pod stromečkem na tebe něco čeká. Rozbal si svůj dárek.";
+
+  /* landing page: nothing to unwrap yet, so offer both ways */
+  function showHub() {
+    show("hub");
+    say("");
+    $("lede").textContent = "Zabal blízkým dárek, nebo si rozbal ten svůj.";
+    W.apply(gift, W.DEFAULT);
+    document.title = "Vánoční dárky";
+    wrapLinks($("hubState")).then(w => {
+      if (w) $("hubNote").innerHTML = `Vítej zpátky. Dílna <strong>${esc(w.name)}</strong> na tebe čeká.`;
+      scheduleFit();
+    });
+  }
+  $("hubCode").addEventListener("click", () => showCodeEntry(""));
+  $("codeBack").addEventListener("click", () => {
+    if (code) { code = null; history.pushState(null, "", location.pathname.replace(/[^/]*$/, "")); }
+    showHub();
+  });
+
   function showCodeEntry(message) {
     show("code");
     say(message);
-    $("lede").textContent = "Pod stromečkem na tebe něco čeká. Rozbal si svůj dárek.";
+    $("lede").textContent = LEDE;
     W.apply(gift, W.DEFAULT);
     setTimeout(() => $("codeInput").focus({ preventScroll: true }), 50);
   }
@@ -155,7 +190,7 @@ import "./fx.js";
 
   async function load() {
     clearInterval(tick);
-    if (!code) { showCodeEntry(""); return; }
+    if (!code) { showHub(); return; }
     show("loading"); say("");
     try {
       meta = await api(`gifts/${code}`);
@@ -188,6 +223,7 @@ import "./fx.js";
     if (!states.open.hidden) {
       if (!$("pwWrap").hidden) $("pwInput").focus(); else states.open.requestSubmit();
     } else if (!states.code.hidden) $("codeInput").focus();
+    else if (!states.hub.hidden) $("hubWrap").focus();
   });
 
   states.open.addEventListener("submit", async e => {
@@ -320,8 +356,26 @@ import "./fx.js";
           : (mode ? `<p class="reveal-empty">Zatím nic. Rozbal první krabičku nahoře.</p>` : "")}
         ${g.signature && done && mode ? `<p class="sign">${esc(g.signature)}</p>` : ""}
         <button class="link-btn" id="rewrap" type="button">Zabalit znovu</button>
-      </article>`;
+      </article>
+      ${done && !opened.preview ? ctaHtml() : ""}`;
     $("rewrap").addEventListener("click", rewrap);
+    if (done && !opened.preview) wrapLinks(reveal);
+  }
+
+  /* after everything is unwrapped: invite the recipient to wrap a present of their own */
+  function ctaHtml() {
+    const touch = matchMedia("(pointer: coarse)").matches;
+    const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+    const keep = touch
+      ? "Ať se k poukazům kdykoli vrátíš, ulož si tuhle stránku do záložek nebo na plochu."
+      : `Ať se k poukazům kdykoli vrátíš, ulož si tuhle stránku do záložek (<kbd>${mac ? "⌘" : "Ctrl"}</kbd> + <kbd>D</kbd>).`;
+    return `<aside class="cta" aria-labelledby="ctaTitle">
+      <p class="eyebrow ruled">Ježíškova dílna</p>
+      <h3 id="ctaTitle">Chceš taky někoho <em>obdarovat?</em></h3>
+      <p class="cta-text">Zabal vlastní online dárek: pár překvapení, poukazy v PDF, heslo a čas, kdy půjde rozbalit. Zdarma a bez registrace.</p>
+      <a class="btn gold" href="dilna#nova" data-wrap data-wrap-back="Pokračovat do mé dílny">Zabalit svůj dárek</a>
+      <p class="cta-keep">${keep}</p>
+    </aside>`;
   }
 
   /* the stage after opening */
