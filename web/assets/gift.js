@@ -288,6 +288,25 @@ import "./fx.js";
       <span class="file-meta">${esc(formatSize(it.file.size))}</span>
     </span>`;
   }
+  /* the photo / postcard inside the box */
+  function photoHtml(g, delay) {
+    const p = g.photo;
+    if (!p) return "";
+    const src = `api/gifts/${encodeURIComponent(g.code)}/photo?t=${encodeURIComponent(opened.token)}`;
+    const ratio = p.w && p.h ? `${p.w} / ${p.h}` : "4 / 3";
+    const cap = p.caption ? `<figcaption>${esc(p.caption)}</figcaption>` : "";
+    const style = `animation-delay:${delay}s;--ratio:${ratio}`;
+    return p.frame === "postcard"
+      ? `<figure class="keepsake postcard" style="${style}">
+          <a class="pc-img" href="${src}" target="_blank" rel="noopener" aria-label="Otevřít pohled v plné velikosti"><img src="${src}" alt="${esc(p.caption || "Pohled")}"></a>
+          <div class="pc-back"><span class="pc-stamp" aria-hidden="true">✦</span>${cap || `<figcaption class="pc-empty">Veselé Vánoce</figcaption>`}</div>
+        </figure>`
+      : `<figure class="keepsake polaroid" style="${style}">
+          <a href="${src}" target="_blank" rel="noopener" aria-label="Otevřít fotku v plné velikosti"><img src="${src}" alt="${esc(p.caption || "Fotka")}"></a>
+          ${cap}
+        </figure>`;
+  }
+
   function itemHtml(it, i, { delay = 0, cls = "" } = {}) {
     return `<li class="${cls}" data-i="${i}" style="${cls === "seen" ? "" : `animation-delay:${delay}s`}">
       <span class="num" aria-hidden="true">${i + 1}</span>
@@ -351,6 +370,7 @@ import "./fx.js";
         <h2>${esc(g.title || "Veselé Vánoce")}</h2>
         <div class="ornament" aria-hidden="true">✦</div>
         ${g.message ? `<p class="note">${esc(g.message)}</p>` : ""}
+        ${g.photo && (all || done) ? photoHtml(g, all ? .35 : 0) : ""}
         ${shown.length
           ? `<ol class="items">${shown.map((it, i) => itemHtml(it, i, all ? { delay: .45 + i * .16 } : { cls: i === fresh ? "flash" : "seen" })).join("")}</ol>`
           : (mode ? `<p class="reveal-empty">Zatím nic. Rozbal první krabičku nahoře.</p>` : "")}

@@ -430,3 +430,69 @@ h1 em { display: block; font-style: italic; font-weight: 500; font-size: 1.3em; 
 /* very low screens (iPhone SE): the placeholder already shows what a code looks like */
 .tiny .code-help { display: none; }
 .short .tag-link { padding-top: 4px; }
+
+/* ---------- the photo / postcard in the box ---------- */
+.keepsake {
+  margin: 6px 0 4px; opacity: 0;
+  animation: keepsakeIn .9s cubic-bezier(.2,.8,.25,1) forwards;
+  filter: drop-shadow(0 18px 22px rgba(0,0,0,.45)) drop-shadow(0 3px 5px rgba(0,0,0,.3));
+}
+@keyframes keepsakeIn {
+  from { opacity: 0; transform: translateY(26px) rotate(var(--r0, -8deg)) scale(.92); }
+  to   { opacity: 1; transform: rotate(var(--r1, -2.2deg)); }
+}
+.keepsake a { display: block; }
+.keepsake img { display: block; width: 100%; height: 100%; object-fit: cover; }
+
+.keepsake.polaroid {
+  --r0: -9deg; --r1: -2.2deg;
+  width: min(300px, 78vw);
+  padding: 12px 12px 0;
+  background: linear-gradient(180deg, #fffdf8, #f3eee2);
+}
+.keepsake.polaroid a { aspect-ratio: var(--ratio, 4 / 3); max-height: 340px; background: #1a1a1a; overflow: hidden; }
+.keepsake.polaroid figcaption, .keepsake.polaroid::after {
+  display: block; min-height: 54px; padding: 12px 6px 14px;
+  font-family: var(--f-display); font-style: italic; font-size: 19px; line-height: 1.2;
+  color: #3b2b1c; text-align: center; overflow-wrap: anywhere;
+}
+.keepsake.polaroid:not(:has(figcaption))::after { content: ""; }
+
+.keepsake.postcard {
+  --r0: 7deg; --r1: 1.6deg;
+  width: min(420px, 86vw);
+  padding: 10px;
+  background: linear-gradient(180deg, #fbf6ea, #efe6d2);
+  border-radius: 3px;
+}
+.keepsake.postcard .pc-img { aspect-ratio: 3 / 2; overflow: hidden; background: #1a1a1a; }
+.pc-back {
+  position: relative;
+  display: flex; align-items: center; gap: 14px;
+  margin-top: 10px; padding: 12px 70px 12px 6px; min-height: 64px;
+  border-top: 1px dashed rgba(59,43,28,.25);
+  background: repeating-linear-gradient(180deg, transparent 0 25px, rgba(59,43,28,.12) 25px 26px);
+}
+.pc-back figcaption {
+  font-family: var(--f-display); font-style: italic; font-size: 20px; line-height: 1.3;
+  color: #2c3e6b; text-align: left; overflow-wrap: anywhere; text-wrap: pretty;
+}
+.pc-back .pc-empty { color: rgba(44,62,107,.7); }
+.pc-stamp {
+  position: absolute; right: 6px; top: 10px;
+  width: 50px; height: 58px; display: grid; place-items: center;
+  font-size: 20px; color: #f6e3ad;
+  background: radial-gradient(circle at 50% 40%, #a51c35, #6d0f20);
+  outline: 3px dotted #fbf6ea; outline-offset: -2px;
+  box-shadow: 0 0 0 1px rgba(59,43,28,.25);
+  transform: rotate(4deg);
+}
+.pc-stamp::after {
+  content: ""; position: absolute; left: -24px; top: 18px; width: 52px; height: 52px; border-radius: 50%;
+  border: 2px solid rgba(44,62,107,.45);
+  background: repeating-linear-gradient(0deg, transparent 0 7px, rgba(44,62,107,.35) 7px 8.5px);
+  -webkit-mask: radial-gradient(circle, #000 60%, transparent 61%);
+  mask: radial-gradient(circle, #000 60%, transparent 61%);
+  opacity: .7;
+}
+@media (prefers-reduced-motion: reduce) { .keepsake { animation: none; opacity: 1; transform: rotate(var(--r1)); } }
