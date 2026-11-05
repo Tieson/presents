@@ -388,3 +388,45 @@ h1 em { display: block; font-style: italic; font-weight: 500; font-size: 1.3em; 
   .land .choice-opts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .land .choice-opt { padding: 12px 14px; }
 
+
+/* ---------- landing: wrap or unwrap ---------- */
+.tag-link {
+  appearance: none; background: none; border: 0; cursor: pointer; align-self: center;
+  font: 400 12px/1 var(--f-body); letter-spacing: .22em; text-transform: uppercase;
+  color: var(--ink-soft); padding: 8px 4px 2px;
+  border-bottom: 1px solid rgba(42,26,16,.25);
+  transition: color .2s, border-color .2s;
+}
+.tag-link:hover { color: var(--burgundy); border-bottom-color: var(--burgundy); }
+.tag-link:focus-visible { outline: 1px solid var(--burgundy); outline-offset: 4px; }
+#hubState .btn { text-align: center; }
+
+/* ---------- after unwrapping: wrap your own ---------- */
+.cta {
+  margin: 34px auto 0;
+  padding: 30px clamp(18px, 5vw, 36px) 26px;
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  text-align: center;
+  border: 1px solid var(--line-gold);
+  border-radius: 4px;
+  background: radial-gradient(90% 70% at 50% 0%, rgba(214,178,106,.10), transparent 70%);
+  opacity: 0; animation: itemIn .7s ease 1.1s forwards;
+}
+.cta h3 {
+  margin: 0;
+  font-family: var(--f-display); font-weight: 400; font-size: clamp(24px, 6vw, 32px); line-height: 1.1;
+  color: var(--cream); text-wrap: balance;
+}
+.cta h3 em { color: var(--gold-light); }
+.cta-text { margin: 0; max-width: 44ch; color: var(--muted); font-size: 15px; text-wrap: pretty; }
+.cta .btn { margin-top: 4px; }
+.cta-keep { margin: 4px 0 0; max-width: 46ch; font-size: 13px; color: var(--muted); text-wrap: balance; }
+.cta kbd {
+  font: 500 11px/1 var(--f-body); letter-spacing: .04em;
+  padding: 3px 6px; border-radius: 3px;
+  border: 1px solid var(--line-gold); color: var(--gold-light);
+}
+@media (prefers-reduced-motion: reduce) { .cta { animation: none; opacity: 1; } }
+/* very low screens (iPhone SE): the placeholder already shows what a code looks like */
+.tiny .code-help { display: none; }
+.short .tag-link { padding-top: 4px; }
