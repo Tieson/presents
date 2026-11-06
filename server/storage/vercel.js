@@ -4,8 +4,14 @@
  *    Keys start with `keyPrefix` (REDIS_KEY_PREFIX, default "xd:"), so the database can be shared.
  *      xd:workshops  hash  id → workshop JSON
  *      xd:keys       hash  sha256(secret key) → workshop id
+ *      xd:emails     hash  sha256(e-mail) → JSON array of workshop ids (lost-link e-mails)
  *      xd:gifts      hash  code → box JSON          xd:own:<id>   set of the workshop's box codes
  *      xd:files      hash  id → PDF meta JSON       xd:ownf:<id>  set of the workshop's file ids
+ *      xd:stats:<code> hash  views, opens, firstViewAt, lastViewAt, firstOpenAt, lastOpenAt
+ *                     (separate from the box, so a visit never overwrites the creator's edit)
+ *      xd:due        zset  code → unlock time (ms): boxes that still have to notify when they unlock
+ *      xd:subs:<scope> hash sha256(endpoint) → push subscription JSON   (scope g:<code> | w:<workshop id>)
+ *      xd:inbox      hash  sha256(endpoint) → last notification text for the service worker
  *  - PDF files in a *private* Vercel Blob store; files are always streamed
  *    through the API after the password + unlock check, the blob URL never
  *    reaches the browser. (BLOB_ACCESS=public works for a public store too.)
@@ -24,6 +30,25 @@ export function vercelStorage({ redisUrl, redisToken, blobToken, blobAccess = "p
     return data.result;
   }
   const parse = v => (v ? JSON.parse(v) : null);
+  /** several commands in one round trip (Upstash /pipeline) */
+  async function pipeline(cmds) {
+    if (!cmds.length) return [];
+    const r = await fetch(redisUrl.replace(/\/+$/, "") + "/pipeline", {
+      method: "POST",
+      headers: { authorization: `Bearer ${redisToken}`, "content-type": "application/json" },
+      body: JSON.stringify(cmds)
+    });
+    const data = await r.json();
+    if (!Array.isArray(data)) throw new Error(`Redis: ${data?.error || "pipeline"}`);
+    return data.map(d => { if (d.error) throw new Error(`Redis: ${d.error}`); return d.result; });
+  }
+  /** HGETALL → object (Upstash returns a flat [k, v, k, v] list) */
+  const hash = list => { const o = {}; for (let i = 0; i + 1 < (list || []).length; i += 2) o[list[i]] = list[i + 1]; return o; };
+  const statsOf = h => ({
+    views: Number(h.views) || 0, opens: Number(h.opens) || 0,
+    firstViewAt: h.firstViewAt || null, lastViewAt: h.lastViewAt || null,
+    firstOpenAt: h.firstOpenAt || null, lastOpenAt: h.lastOpenAt || null
+  });
   const K = name => keyPrefix + name;     // every Redis key goes through here (shared databases)
 
   let blobMod;
@@ -40,6 +65,11 @@ export function vercelStorage({ redisUrl, redisToken, blobToken, blobAccess = "p
     async getKeyOwner(hash) { return (await redis("HGET", K("keys"), hash)) || null; },
     async setKeyOwner(hash, id) { await redis("HSET", K("keys"), hash, id); },
     async deleteKeyOwner(hash) { await redis("HDEL", K("keys"), hash); },
+    async getEmailOwners(hash) { return parse(await redis("HGET", K("emails"), hash)) || []; },
+    async setEmailOwners(hash, ids) {
+      if (ids.length) await redis("HSET", K("emails"), hash, JSON.stringify(ids));
+      else await redis("HDEL", K("emails"), hash);
+    },
 
     /* gifts */
     async listGiftsByOwner(owner) {
@@ -57,8 +87,33 @@ export function vercelStorage({ redisUrl, redisToken, blobToken, blobAccess = "p
     async deleteGift(code) {
       const g = await this.getGift(code);
       await redis("HDEL", K("gifts"), code);
+      await redis("DEL", K(`stats:${code}`));
       if (g?.owner) await redis("SREM", K(`own:${g.owner}`), code);
     },
+
+    /* notifications */
+    async setDue(code, ms) { if (ms == null) await redis("ZREM", K("due"), code); else await redis("ZADD", K("due"), ms, code); },
+    async dueCodes(nowMs) { return (await redis("ZRANGEBYSCORE", K("due"), "-inf", nowMs)) || []; },
+    async claimDue(code) { return Number(await redis("ZREM", K("due"), code)) === 1; },   // only one caller wins
+    async addSub(scope, hash, sub) { await redis("HSET", K(`subs:${scope}`), hash, JSON.stringify(sub)); },
+    async listSubs(scope) { const h = hash(await redis("HGETALL", K(`subs:${scope}`))); return Object.entries(h).map(([k, v]) => ({ hash: k, ...JSON.parse(v) })); },
+    async removeSub(scope, hash) { await redis("HDEL", K(`subs:${scope}`), hash); await redis("HDEL", K("inbox"), hash); },
+    async deleteSubs(scope) {
+      const subs = await this.listSubs(scope);
+      for (const s of subs) await redis("HDEL", K("inbox"), s.hash);
+      await redis("DEL", K(`subs:${scope}`));
+    },
+    async putInbox(hash, msg) { await redis("HSET", K("inbox"), hash, JSON.stringify(msg)); },
+    async getInbox(hash) { return parse(await redis("HGET", K("inbox"), hash)); },
+
+    /* stats */
+    async bumpStats(code, kind, at) {
+      const k = K(`stats:${code}`), f = kind === "open" ? "Open" : "View";
+      const [n] = await pipeline([["HINCRBY", k, kind === "open" ? "opens" : "views", 1], ["HSETNX", k, `first${f}At`, at], ["HSET", k, `last${f}At`, at]]);
+      return Number(n);                     // the new count (1 = the very first)
+    },
+    async getStats(code) { return statsOf(hash(await redis("HGETALL", K(`stats:${code}`)))); },
+    async getStatsMany(codes) { return (await pipeline(codes.map(c => ["HGETALL", K(`stats:${c}`)]))).map(r => statsOf(hash(r))); },
 
     /* files */
     async saveFile(meta, buf) {

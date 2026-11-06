@@ -10,6 +10,8 @@ Chyby mají tvar `{ "error": "kod_chyby", "message": "lidsky čitelný text" }`.
 | GET | `gifts/{code}` | Obálka dárku: `{ code, title, hasPassword, locked, openAt, serverNow }`. `title` je `null`, pokud ho tvůrce skryl. |
 | POST | `gifts/{code}/open` | Tělo `{ password }` nebo `{ token }` (dříve vydaný token, aby příjemce nemusel heslo psát znovu). Vrací `{ gift, token }`. `401 bad_password`, `423 locked` (+ `openAt`, `serverNow`), `404 not_found`. Přihlášená dílna, které box patří, obejde s `{ preview: true }` zámek i heslo. |
 | GET | `gifts/{code}/items/{itemId}/file?t={token}[&dl=1]` | PDF položky. Server znovu ověří token i časový zámek. |
+| POST/DELETE | `gifts/{code}/subscribe` | `{ endpoint }` z `PushSubscription`: obdarovaný chce systémové upozornění, až dárek půjde rozbalit nebo až tvůrce zazvoní. Jen známé push služby, jinak `400 bad_endpoint`. `503 push_off`. |
+| GET | `gifts/{code}?poll=1` | Totéž co meta, ale nepočítá se jako návštěva. Čekající stránka se tak každých 20 s ptá na `ringAt`. |
 | GET | `gifts/{code}/photo?t={token}` | Fotka boxu (JPEG/PNG/WebP). Stejná kontrola tokenu a zámku. V `open` je jen `gift.photo = { caption, frame, w, h }`, id souboru se nezveřejňuje. |
 
 `gift` = `{ code, title, message, signature, items: [{ id, name, description, file: { name, size } | null }] }`
@@ -21,12 +23,19 @@ Přihlášení drží HttpOnly cookie `xd_ws` (rok). Bez ní vrací chráněné 
 
 | Metoda | Cesta | Popis |
 |---|---|---|
-| POST | `workshop` | Založí dílnu. Tělo `{ name?, email?, signupCode? }` (`signupCode` jen pokud je nastavený `SIGNUP_CODE`). Vrátí `{ workshop }` včetně `key` a přihlásí. `400 bad_email`, `403 bad_signup_code`. |
+| GET | `push/inbox?e={endpoint}` | Text posledního upozornění pro daný odběr (service worker po prázdném pushi). |
+| GET/POST | `cron` | Pošle upozornění boxům, kterým právě nastal čas odemčení. `Authorization: Bearer CRON_SECRET` nebo `?key=CRON_SECRET` (když je `CRON_SECRET` nastavený). Vrátí `{ ok, sent }`. |
+| GET | `info` | `{ mail, signupCode, push }` (`push` = veřejný VAPID klíč nebo `null`): jestli server posílá e-maily a jestli zakládání chce kód. Bez přihlášení. |
+| POST | `workshop` | Založí dílnu. Tělo `{ name?, email?, signupCode? }` (`signupCode` jen pokud je nastavený `SIGNUP_CODE`). Vrátí `{ workshop, mailed }` včetně `key` a přihlásí. `mailed` = odešel uvítací e-mail s odkazem. `400 bad_email`, `403 bad_signup_code`. |
+| POST | `workshop/recover` | `{ email }`: pošle odkaz do všech dílen s touto adresou. Odpověď je vždy `{ ok: true }`, ať adresa dílnu má, nebo ne. `400 bad_email`, `503 mail_off`. Bez přihlášení. |
 | POST | `workshop/login` | `{ key }` z tajného odkazu `…/dilna#klic=KEY`. Přihlásí, vrátí `{ workshop }`. `401 bad_key`. |
 | POST | `workshop/logout` | Odhlásí toto zařízení. |
 | GET | `workshop` | `{ workshop }` |
 | PUT | `workshop` | `{ name?, email? }` |
-| POST | `workshop/rotate-key` | Nový klíč, starý přestane platit a ostatní zařízení se odhlásí. Vrátí `{ workshop }` s novým `key`. |
+| POST/DELETE | `workshop/subscribe` | `{ endpoint }`: upozornění pro tvůrce (první otevření a první rozbalení každého boxu). |
+| POST | `admin/gifts/{code}/ring` | „Zazvonit“: e-mail obdarovanému (má-li box `recipientEmail`) + push jeho prohlížečům + `ringAt` pro otevřenou stránku. `{ ok, ringAt, mailed, pushed }`, `429 too_soon` (1× za minutu). |
+| POST | `workshop/send-link` | Pošle odkaz na uložený e-mail. `{ ok, email }`. `400 no_email`, `429 too_soon` (víc než 1 e-mail za minutu), `502 mail_failed`, `503 mail_off`. |
+| POST | `workshop/rotate-key` | Nový klíč, starý přestane platit a ostatní zařízení se odhlásí. Vrátí `{ workshop, mailed }` s novým `key`. Má-li dílna e-mail, pošle na něj nový odkaz. |
 | DELETE | `workshop` | Smaže dílnu se všemi boxy a PDF. |
 
 `workshop` = `{ id, name, email, key, createdAt, giftCount, usedBytes, limits: { gifts, storageBytes, uploadBytes } }`
@@ -56,9 +65,12 @@ Vyžadují přihlášenou dílnu. Cizí box nebo PDF vrací `404`, jako by neexi
   "keyHash": "<sha256 hex klíče>",
   "keyEnc": "<base64(iv12 | tag16 | AES-256-GCM(klíč))>",
   "usedBytes": 12345,
+  "mailedAt": "…",
   "createdAt": "…", "updatedAt": "…"
 }
 ```
+
+Index e-mailů pro obnovu odkazu: `sha256("email|" + email.toLowerCase())` → seznam id dílen (soubory `emails/<hash>.json`, v Redisu hash `<prefix>emails`).
 
 Klíč šifruje AES-256-GCM s klíčem `sha256("xd-key-enc|" + APP_SECRET)`. Formát je stejný v Node i PHP.
 Přihlašovací cookie = `<id>.<exp>.<HMAC(APP_SECRET, "ws|id|keyHash[0..16]|exp")>`, takže výměna klíče zneplatní všechna starší přihlášení.
@@ -80,6 +92,10 @@ Přihlašovací cookie = `<id>.<exp>.<HMAC(APP_SECRET, "ws|id|keyHash[0..16]|exp
   "appearance": { "paper": "burgundy", "pattern": "stripes", "patternColor": null, "patternOpacity": null, "ribbon": "gold", "ribbonStyle": "cross", "bow": "classic", "deco": "none", "seal": "V" },
   "reveal": "all",
   "items": [{ "id": "…", "name": "…", "description": "…", "file": { "id": "…", "name": "poukaz.pdf", "size": 12345 } }],
+  "theme": "christmas",
+  "recipientEmail": "kata@example.cz",
+  "notifiedAt": null,
+  "ringAt": null,
   "photo": { "file": { "id": "…", "name": "hory.jpg", "size": 234567, "type": "image/jpeg", "w": 1600, "h": 1067 }, "caption": "Krkonoše 2025", "frame": "polaroid" },
   "createdAt": "…", "updatedAt": "…"
 }
@@ -92,6 +108,10 @@ Přihlašovací cookie = `<id>.<exp>.<HMAC(APP_SECRET, "ws|id|keyHash[0..16]|exp
 - `patternOpacity` = 5–90 (%), nebo `null` = výchozí výraznost papíru
 - `ribbon` ∈ gold, silver, copper, red, burgundy, pink, green, navy, white, black · `ribbonStyle` ∈ cross, single, none
 - `bow` ∈ classic, double, rosette, small, none · `deco` ∈ none, holly, pine, candy, bauble, star, bells, orange · `seal` = 0–2 znaky
+
+`theme` ∈ christmas, birthday, wedding, general (výchozí christmas). Dílna má `theme` taky: poslední zvolenou příležitost, `PUT workshop { theme }`. A `notifyOpen` (e-mail tvůrci při prvním rozbalení, výchozí `true`).
+`recipientEmail`: komu v čas odemčení přijde e-mail; `notifiedAt`: kdy odešel (při novém budoucím čase se vynuluje).
+Statistiky (`stats` v `GET admin/gifts` a `admin/gifts/{code}`): `{ views, opens, firstViewAt, lastViewAt, firstOpenAt, lastOpenAt }`. Ukládají se zvlášť (Redis `stats:<code>`, soubor `stats/<code>.json`), aby návštěva nikdy nepřepsala tvůrcovu úpravu.
 
 `photo` (nebo `null`): obrázek nahraný stejnou dílnou, `caption` do 200 znaků, `frame` ∈ polaroid, postcard. V `PUT` vynechané `photo` = beze změny, `null` = odebrat (soubor se smaže).
 `reveal` ∈ `all` (najednou), `sequential` (postupně), `choice` (vybere příjemce). Neplatné hodnoty server nahradí výchozími; boxy uložené před zavedením těchto polí je dostanou automaticky.

@@ -8,6 +8,9 @@
  *
  * Data: JSON files in DATA_DIR
  *   workshops/<id>.json   keys/<sha256>.json   gifts/<code>.json   files/<id>.pdf + <id>.json
+ *   emails/<sha256>.json  (workshops saved with an e-mail address, for lost-link e-mails)
+ *
+ * E-mails (optional): SMTP_HOST + MAIL_FROM + APP_URL in config.php, see config.sample.php.
  */
 declare(strict_types=1);
 
@@ -24,6 +27,29 @@ $MAX_UPLOAD = (int) cfg($config, 'MAX_UPLOAD_MB', 15) * 1024 * 1024;
 $MAX_GIFTS = (int) cfg($config, 'MAX_GIFTS', 50);
 $MAX_STORAGE = (int) cfg($config, 'MAX_STORAGE_MB', 100) * 1024 * 1024;
 $SIGNUP_CODE = trim((string) cfg($config, 'SIGNUP_CODE', ''));
+$MAIL = [
+    'transport' => strtolower((string) cfg($config, 'MAIL_TRANSPORT', 'smtp')),   // smtp | mail (PHP mail())
+    'host' => trim((string) cfg($config, 'SMTP_HOST', '')),
+    'port' => (int) cfg($config, 'SMTP_PORT', 587),
+    'secure' => strtolower((string) cfg($config, 'SMTP_SECURE', '')),             // tls | starttls | none
+    'user' => (string) cfg($config, 'SMTP_USER', ''),
+    'pass' => (string) cfg($config, 'SMTP_PASS', ''),
+    'from' => trim((string) cfg($config, 'MAIL_FROM', '')),
+    'replyTo' => trim((string) cfg($config, 'MAIL_REPLY_TO', '')),
+    'appUrl' => rtrim(trim((string) cfg($config, 'APP_URL', '')), '/'),
+    'gap' => (int) cfg($config, 'MAIL_GAP_SECONDS', 60),
+];
+if ($MAIL['secure'] === '') $MAIL['secure'] = $MAIL['port'] === 465 ? 'tls' : 'starttls';
+$MAIL['enabled'] = $MAIL['from'] !== '' && $MAIL['appUrl'] !== '' && ($MAIL['host'] !== '' || $MAIL['transport'] === 'mail');
+$PUSH = [
+    'public' => trim((string) cfg($config, 'VAPID_PUBLIC_KEY', '')),
+    'private' => trim((string) cfg($config, 'VAPID_PRIVATE_KEY', '')),
+    'subject' => trim((string) cfg($config, 'VAPID_SUBJECT', 'mailto:dilna@example.cz')),
+    'testSink' => trim((string) cfg($config, 'PUSH_TEST_SINK', '')),   // tests only
+];
+$PUSH['enabled'] = $PUSH['public'] !== '' && $PUSH['private'] !== '';
+$CRON_SECRET = trim((string) cfg($config, 'CRON_SECRET', ''));
+$RING_GAP = (int) cfg($config, 'RING_GAP_SECONDS', 60);
 
 const WS_COOKIE = 'xd_ws';
 const WS_TTL = 31536000;     // stays signed in on a device for a year
@@ -115,6 +141,8 @@ const BOWS = ['classic', 'double', 'rosette', 'small', 'none'];
 const DECOS = ['none', 'holly', 'pine', 'candy', 'bauble', 'star', 'bells', 'orange'];
 const PHOTO_FRAMES = ['polaroid', 'postcard'];
 const REVEALS = ['all', 'sequential', 'choice'];
+const THEMES = ['christmas', 'birthday', 'wedding', 'general'];   // occasion of a box (and the workshop's current one)
+function theme_of($v): string { return in_array($v, THEMES, true) ? $v : 'christmas'; }
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
 /** Content type from the first bytes (never trust the browser's word) */
@@ -157,6 +185,7 @@ function with_defaults(?array $g): ?array {
     $g['appearance'] = sanitize_appearance($g['appearance'] ?? null);
     $g['reveal'] = in_array($g['reveal'] ?? null, REVEALS, true) ? $g['reveal'] : 'all';
     $g['photo'] = $g['photo'] ?? null;
+    $g['theme'] = theme_of($g['theme'] ?? null);
     return $g;
 }
 
@@ -192,7 +221,12 @@ $GIFTS = $DATA_DIR . '/gifts';
 $FILES = $DATA_DIR . '/files';
 $WORKSHOPS = $DATA_DIR . '/workshops';
 $KEYS = $DATA_DIR . '/keys';
-foreach ([$GIFTS, $FILES, $WORKSHOPS, $KEYS] as $d) if (!is_dir($d)) @mkdir($d, 0775, true);
+$EMAILS = $DATA_DIR . '/emails';
+$STATS = $DATA_DIR . '/stats';
+$DUE = $DATA_DIR . '/due';
+$SUBS = $DATA_DIR . '/subs';
+$INBOX = $DATA_DIR . '/inbox';
+foreach ([$GIFTS, $FILES, $WORKSHOPS, $KEYS, $EMAILS, $STATS, $DUE, $SUBS, $INBOX] as $d) if (!is_dir($d)) @mkdir($d, 0775, true);
 if (!is_file($DATA_DIR . '/.htaccess')) @file_put_contents($DATA_DIR . '/.htaccess', "Require all denied\nDeny from all\n");
 
 function safe_name($s): bool { return is_string($s) && (bool) preg_match('/^[\w-]+$/', $s); }
@@ -219,10 +253,37 @@ function delete_workshop(string $id): void { global $WORKSHOPS; if (safe_name($i
 function get_key_owner(string $hash): ?string { global $KEYS; $v = safe_name($hash) ? read_json_file("$KEYS/$hash.json") : null; return $v['id'] ?? null; }
 function set_key_owner(string $hash, string $id): void { global $KEYS; write_atomic("$KEYS/$hash.json", json_encode(['id' => $id])); }
 function delete_key_owner(string $hash): void { global $KEYS; if (safe_name($hash)) @unlink("$KEYS/$hash.json"); }
+function get_email_owners(string $hash): array { global $EMAILS; $v = safe_name($hash) ? read_json_file("$EMAILS/$hash.json") : null; return $v['ids'] ?? []; }
+function set_email_owners(string $hash, array $ids): void {
+    global $EMAILS;
+    if (!safe_name($hash)) return;
+    if ($ids) write_atomic("$EMAILS/$hash.json", json_encode(['ids' => array_values($ids)])); else @unlink("$EMAILS/$hash.json");
+}
 
 function get_gift($code): ?array { global $GIFTS; return safe_name($code) ? with_defaults(read_json_file("$GIFTS/$code.json")) : null; }
 function put_gift(array $g): void { global $GIFTS; write_atomic("$GIFTS/{$g['code']}.json", enc($g)); }
-function delete_gift(string $code): void { global $GIFTS; if (safe_name($code)) @unlink("$GIFTS/$code.json"); }
+function delete_gift(string $code): void { global $GIFTS, $STATS; if (safe_name($code)) { @unlink("$GIFTS/$code.json"); @unlink("$STATS/$code.json"); } }
+
+/* views / unwraps of a box, kept apart so a visit never overwrites the creator's edit */
+const EMPTY_STATS = ['views' => 0, 'opens' => 0, 'firstViewAt' => null, 'lastViewAt' => null, 'firstOpenAt' => null, 'lastOpenAt' => null];
+function get_stats(string $code): array {
+    global $STATS;
+    $s = safe_name($code) ? read_json_file("$STATS/$code.json") : null;
+    return array_merge(EMPTY_STATS, is_array($s) ? $s : []);
+}
+function bump_stats(string $code, string $kind): int {
+    global $STATS;
+    if (!safe_name($code)) return 0;
+    $fp = @fopen("$STATS/$code.lock", 'c');
+    if ($fp) flock($fp, LOCK_EX);
+    $s = get_stats($code);
+    $at = now_iso();
+    if ($kind === 'open') { $s['opens']++; $s['firstOpenAt'] = $s['firstOpenAt'] ?? $at; $s['lastOpenAt'] = $at; }
+    else { $s['views']++; $s['firstViewAt'] = $s['firstViewAt'] ?? $at; $s['lastViewAt'] = $at; }
+    write_atomic("$STATS/$code.json", json_encode($s));
+    if ($fp) { flock($fp, LOCK_UN); fclose($fp); @unlink("$STATS/$code.lock"); }
+    return $kind === 'open' ? $s['opens'] : $s['views'];   // the new count (1 = the very first)
+}
 function gifts_by_owner(string $owner): array {
     global $GIFTS;
     return array_values(array_map('with_defaults', array_filter(read_all($GIFTS), function ($g) use ($owner) { return ($g['owner'] ?? null) === $owner; })));
@@ -247,7 +308,7 @@ function summary(array $g): array {
         'code' => $g['code'], 'title' => $g['title'], 'showTitle' => (bool) $g['showTitle'],
         'hasPassword' => !empty($g['passwordHash']), 'anytime' => (bool) $g['anytime'], 'openAt' => $g['openAt'],
         'manualUnlock' => (bool) $g['manualUnlock'], 'locked' => is_locked($g),
-        'appearance' => $g['appearance'], 'reveal' => $g['reveal'],
+        'appearance' => $g['appearance'], 'reveal' => $g['reveal'], 'theme' => $g['theme'],
         'itemCount' => count($g['items']), 'fileCount' => $files, 'hasPhoto' => !empty($g['photo']),
         'createdAt' => $g['createdAt'], 'updatedAt' => $g['updatedAt'],
     ];
@@ -255,6 +316,7 @@ function summary(array $g): array {
 function public_gift(array $g): array {
     return [
         'code' => $g['code'],
+        'theme' => $g['theme'],
         'title' => $g['showTitle'] ? $g['title'] : null,
         'message' => $g['message'],
         'signature' => $g['signature'],
@@ -335,7 +397,8 @@ function sign_out(): void { set_session_cookie('', 0); }
 function workshop_view(array $w, ?string $key = null): array {
     global $SECRET, $MAX_GIFTS, $MAX_STORAGE, $MAX_UPLOAD;
     return [
-        'id' => $w['id'], 'name' => $w['name'], 'email' => $w['email'],
+        'id' => $w['id'], 'name' => $w['name'], 'email' => $w['email'], 'theme' => theme_of($w['theme'] ?? null),
+        'notifyOpen' => ($w['notifyOpen'] ?? true) !== false,
         'key' => $key ?? decrypt_str($SECRET, $w['keyEnc'] ?? ''),
         'createdAt' => $w['createdAt'],
         'giftCount' => count(gifts_by_owner($w['id'])),
@@ -358,6 +421,387 @@ function new_key_for(array &$w): string {
     set_key_owner($w['keyHash'], $w['id']);
     return $key;
 }
+/* ---------- e-mail ---------- */
+
+function email_hash(string $e): string { return hash('sha256', 'email|' . mb_strtolower(trim($e), 'UTF-8')); }
+function index_email(string $id, string $old, string $new): void {
+    if ($old !== '' && ($new === '' || email_hash($old) !== email_hash($new))) {
+        $h = email_hash($old);
+        set_email_owners($h, array_values(array_filter(get_email_owners($h), function ($x) use ($id) { return $x !== $id; })));
+    }
+    if ($new !== '') {
+        $h = email_hash($new);
+        $ids = get_email_owners($h);
+        if (!in_array($id, $ids, true)) { $ids[] = $id; set_email_owners($h, array_slice($ids, -20)); }
+    }
+}
+
+/** Same wording as server/mail.js */
+function link_message(string $kind, string $name, string $link): array {
+    $subject = [
+        'welcome' => "Tvoje Ježíškova dílna „{$name}“",
+        'link' => "Odkaz do dílny „{$name}“",
+        'recover' => "Odkaz do dílny „{$name}“",
+        'rotated' => "Nový odkaz do dílny „{$name}“",
+    ][$kind];
+    $lead = [
+        'welcome' => 'dílna je připravená. Tímhle odkazem se do ní dostaneš z jakéhokoli zařízení:',
+        'link' => 'posíláme odkaz do tvé dílny, jak sis řekl(a):',
+        'recover' => 'někdo (nejspíš ty) požádal o odkaz do dílny s touhle e-mailovou adresou. Tady je:',
+        'rotated' => 'odkaz do dílny byl právě vyměněn za nový. Starý už neplatí. Nový je tady:',
+    ][$kind];
+    $foot = $kind === 'recover'
+        ? 'Pokud jsi o odkaz nežádal(a), tenhle e-mail klidně smaž. Bez odkazu se do dílny nikdo nedostane.'
+        : 'Kdo má odkaz, může dárky upravovat, tak ho nikomu nepřeposílej.';
+    $h = function (string $v): string { return htmlspecialchars($v, ENT_QUOTES, 'UTF-8'); };
+    $text = "Ahoj,\n\n{$lead}\n\n{$link}\n\n{$foot}\n\nVeselé Vánoce\nJežíškova dílna\n";
+    $html = '<!doctype html><html lang="cs"><body style="margin:0;padding:0;background:#05140e">'
+        . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#05140e;padding:32px 12px"><tr><td align="center">'
+        . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#0b241a;border:1px solid #d6b26a;font-family:Georgia,\'Times New Roman\',serif;color:#f3ead6">'
+        . '<tr><td style="padding:36px 32px 8px;text-align:center">'
+        . '<p style="margin:0;font:12px/1 Arial,sans-serif;letter-spacing:4px;text-transform:uppercase;color:#d6b26a">Ježíškova dílna</p>'
+        . '<h1 style="margin:14px 0 0;font-weight:normal;font-style:italic;font-size:30px;line-height:1.15;color:#f6e3ad">' . $h($name) . '</h1>'
+        . '</td></tr>'
+        . '<tr><td style="padding:18px 32px 0;font:16px/1.55 Arial,sans-serif;color:#e8e0cc">Ahoj,<br>' . $h($lead) . '</td></tr>'
+        . '<tr><td align="center" style="padding:24px 32px">'
+        . '<a href="' . $h($link) . '" style="display:inline-block;padding:15px 26px;background:#d6b26a;color:#2a1a10;font:bold 13px/1 Arial,sans-serif;letter-spacing:3px;text-transform:uppercase;text-decoration:none;border-radius:3px">Otevřít dílnu</a>'
+        . '</td></tr>'
+        . '<tr><td style="padding:0 32px;font:12px/1.5 \'Courier New\',monospace;color:#b7b29a;word-break:break-all;text-align:center">' . $h($link) . '</td></tr>'
+        . '<tr><td style="padding:22px 32px 32px;font:13px/1.55 Arial,sans-serif;color:#b7b29a">' . $h($foot) . '<br><br>Veselé Vánoce<br>Ježíškova dílna</td></tr>'
+        . '</table></td></tr></table></body></html>';
+    return [$subject, $text, $html];
+}
+
+/** "=?UTF-8?B?…?=" words, split on character boundaries so no line gets too long */
+function mime_header(string $s): string {
+    if (!preg_match('/[^\x20-\x7E]/', $s)) return $s;
+    $words = []; $cur = '';
+    foreach (preg_split('//u', $s, -1, PREG_SPLIT_NO_EMPTY) as $ch) {
+        if (strlen($cur . $ch) > 45) { $words[] = $cur; $cur = ''; }
+        $cur .= $ch;
+    }
+    if ($cur !== '') $words[] = $cur;
+    return implode("\r\n ", array_map(function ($w) { return '=?UTF-8?B?' . base64_encode($w) . '?='; }, $words));
+}
+/** "Ježíškova dílna <dilna@example.cz>" → [display header, bare address] */
+function mail_address(string $v): array {
+    if (preg_match('/^\s*(.*?)\s*<([^<>\s]+@[^<>\s]+)>\s*$/u', $v, $m)) {
+        $name = trim($m[1], " \"");
+        return [$name !== '' ? mime_header($name) . " <{$m[2]}>" : $m[2], $m[2]];
+    }
+    return [trim($v), trim($v)];
+}
+
+function build_message(array $mail, string $to, string $subject, string $text, string $html): array {
+    [$fromHeader, $fromAddr] = mail_address($mail['from']);
+    $boundary = 'xd-' . bin2hex(random_bytes(12));
+    $domain = substr(strrchr($fromAddr, '@') ?: '@localhost', 1);
+    $headers = [
+        'Date: ' . date(DATE_RFC2822),
+        'From: ' . $fromHeader,
+        'To: ' . $to,
+        'Subject: ' . mime_header($subject),
+        'Message-ID: <' . bin2hex(random_bytes(16)) . '@' . $domain . '>',
+        'MIME-Version: 1.0',
+        'Content-Type: multipart/alternative; boundary="' . $boundary . '"',
+    ];
+    if ($mail['replyTo'] !== '') $headers[] = 'Reply-To: ' . mail_address($mail['replyTo'])[0];
+    $part = function (string $type, string $body) use ($boundary): string {
+        return "--{$boundary}\r\nContent-Type: {$type}; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n"
+            . rtrim(chunk_split(base64_encode($body), 76, "\r\n")) . "\r\n";
+    };
+    $body = $part('text/plain', $text) . $part('text/html', $html) . "--{$boundary}--\r\n";
+    return [$headers, $body, $fromAddr, $domain];
+}
+
+/** Minimal SMTP client: implicit TLS (465) or STARTTLS (587), AUTH PLAIN / LOGIN. Throws on error. */
+function smtp_send(array $mail, string $to, string $subject, string $text, string $html): void {
+    [$headers, $body, $fromAddr, $domain] = build_message($mail, $to, $subject, $text, $html);
+    $remote = ($mail['secure'] === 'tls' ? 'ssl://' : 'tcp://') . $mail['host'] . ':' . $mail['port'];
+    $ctx = stream_context_create(['ssl' => ['peer_name' => $mail['host'], 'verify_peer' => true, 'verify_peer_name' => true]]);
+    $fp = @stream_socket_client($remote, $errno, $errstr, 10, STREAM_CLIENT_CONNECT, $ctx);
+    if (!$fp) throw new RuntimeException("SMTP: nepodařilo se připojit k {$mail['host']}:{$mail['port']} ({$errstr})");
+    stream_set_timeout($fp, 15);
+    $read = function () use ($fp): array {
+        $all = '';
+        while (($line = fgets($fp, 1024)) !== false) {
+            $all .= $line;
+            if (strlen($line) < 4 || $line[3] === ' ') break;
+        }
+        return [(int) substr($all, 0, 3), $all];
+    };
+    $cmd = function (?string $line, array $expect, string $hide = '') use ($fp, $read): string {
+        if ($line !== null) fwrite($fp, $line . "\r\n");
+        [$code, $resp] = $read();
+        if (!in_array($code, $expect, true)) {
+            throw new RuntimeException('SMTP: ' . ($hide ?: ($line ?? 'spojení')) . ' → ' . trim($resp));
+        }
+        return $resp;
+    };
+    try {
+        $cmd(null, [220]);
+        $ehlo = $cmd('EHLO ' . $domain, [250]);
+        if ($mail['secure'] === 'starttls') {
+            $cmd('STARTTLS', [220]);
+            if (!stream_socket_enable_crypto($fp, true, STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT | (defined('STREAM_CRYPTO_METHOD_TLSv1_3_CLIENT') ? STREAM_CRYPTO_METHOD_TLSv1_3_CLIENT : 0))) {
+                throw new RuntimeException('SMTP: STARTTLS se nepodařilo');
+            }
+            $ehlo = $cmd('EHLO ' . $domain, [250]);
+        }
+        if ($mail['user'] !== '') {
+            if (preg_match('/AUTH[ =][^\r\n]*PLAIN/i', $ehlo)) {
+                $cmd('AUTH PLAIN ' . base64_encode("\0{$mail['user']}\0{$mail['pass']}"), [235], 'AUTH PLAIN');
+            } else {
+                $cmd('AUTH LOGIN', [334]);
+                $cmd(base64_encode($mail['user']), [334], 'AUTH LOGIN (jméno)');
+                $cmd(base64_encode($mail['pass']), [235], 'AUTH LOGIN (heslo)');
+            }
+        }
+        $cmd("MAIL FROM:<{$fromAddr}>", [250]);
+        $cmd("RCPT TO:<{$to}>", [250, 251]);
+        $cmd('DATA', [354]);
+        $data = implode("\r\n", $headers) . "\r\n\r\n" . $body;
+        $data = preg_replace('/^\./m', '..', $data);           // dot-stuffing
+        fwrite($fp, $data . "\r\n.\r\n");
+        $cmd(null, [250], 'DATA');
+        fwrite($fp, "QUIT\r\n");
+    } finally {
+        fclose($fp);
+    }
+}
+
+function send_mail(string $to, array $msg): void {
+    global $MAIL;
+    [$subject, $text, $html] = $msg;
+    if ($MAIL['host'] === '' && $MAIL['transport'] === 'mail') {
+        [$headers, $body, $fromAddr] = build_message($MAIL, $to, $subject, $text, $html);
+        $headers = array_values(array_filter($headers, function ($h) { return strpos($h, 'To: ') !== 0 && strpos($h, 'Subject: ') !== 0; }));
+        if (!mail($to, mime_header($subject), $body, implode("\r\n", $headers), '-f' . $fromAddr)) throw new RuntimeException('mail() selhalo');
+        return;
+    }
+    smtp_send($MAIL, $to, $subject, $text, $html);
+}
+
+/** Sends the secret link; true when it went out. Never throws. */
+function mail_link(array $w, string $kind, ?string $key = null): bool {
+    global $MAIL, $SECRET;
+    if (!$MAIL['enabled'] || ($w['email'] ?? '') === '') return false;
+    if (!empty($w['mailedAt']) && time() - strtotime((string) $w['mailedAt']) < $MAIL['gap']) return false;
+    $k = $key ?? decrypt_str($SECRET, $w['keyEnc'] ?? '');
+    if (!$k) return false;
+    try {
+        send_mail((string) $w['email'], link_message($kind, (string) $w['name'], $MAIL['appUrl'] . '/dilna#klic=' . $k));
+    } catch (Throwable $e) {
+        error_log("E-mail ({$kind}) se nepodařilo odeslat: " . $e->getMessage());
+        return false;
+    }
+    $fresh = get_workshop($w['id']);
+    if ($fresh) { $fresh['mailedAt'] = now_iso(); put_workshop($fresh); }
+    return true;
+}
+
+/* ---------- notifications: e-mail + Web Push (same behaviour as server/app.js, server/push.js) ---------- */
+
+/** Only real push services, so a stored subscription can never make the server call anything else */
+function clean_endpoint($v): ?string {
+    if (!is_string($v) || strlen($v) > 800) return null;
+    $u = parse_url($v);
+    if (!$u || ($u['scheme'] ?? '') !== 'https' || isset($u['port']) || isset($u['user']) || isset($u['pass']) || empty($u['host'])) return null;
+    $h = strtolower($u['host']);
+    foreach (['/^fcm\.googleapis\.com$/', '/^updates\.push\.services\.mozilla\.com$/', '/^push\.services\.mozilla\.com$/', '/(^|\.)push\.apple\.com$/',
+              '/(^|\.)notify\.windows\.com$/', '/^android\.googleapis\.com$/', '/^web\.push\.apple\.com$/'] as $re) {
+        if (preg_match($re, $h)) return $v;
+    }
+    return null;
+}
+function b64u(string $b): string { return rtrim(strtr(base64_encode($b), '+/', '-_'), '='); }
+function b64u_dec(string $s): string { return (string) base64_decode(strtr($s, '-_', '+/') . str_repeat('=', (4 - strlen($s) % 4) % 4)); }
+
+/** ES256 JWT for VAPID; the raw P-256 key is wrapped into a SEC1 PEM for openssl */
+function vapid_jwt(string $aud): string {
+    global $PUSH;
+    $pub = b64u_dec($PUSH['public']); $d = b64u_dec($PUSH['private']);
+    $der = "\x30\x77\x02\x01\x01\x04\x20" . str_pad($d, 32, "\0", STR_PAD_LEFT)
+        . "\xa0\x0a\x06\x08\x2a\x86\x48\xce\x3d\x03\x01\x07\xa1\x44\x03\x42\x00" . $pub;
+    $pem = "-----BEGIN EC PRIVATE KEY-----\n" . chunk_split(base64_encode($der), 64, "\n") . "-----END EC PRIVATE KEY-----\n";
+    $head = b64u(json_encode(['typ' => 'JWT', 'alg' => 'ES256']));
+    $body = b64u(json_encode(['aud' => $aud, 'exp' => time() + 12 * 3600, 'sub' => $PUSH['subject']], JSON_UNESCAPED_SLASHES));
+    if (!openssl_sign("$head.$body", $sig, $pem, OPENSSL_ALGO_SHA256)) throw new RuntimeException('VAPID: podpis se nepovedl (zkontroluj klíče)');
+    // DER (SEQUENCE of two INTEGERs) → raw r||s, 32 bytes each
+    $p = 2; if (ord($sig[1]) & 0x80) $p += ord($sig[1]) & 0x7f;
+    $rl = ord($sig[$p + 1]); $r = substr($sig, $p + 2, $rl); $p += 2 + $rl;
+    $sl = ord($sig[$p + 1]); $sv = substr($sig, $p + 2, $sl);
+    $fix = function ($x) { return str_pad(ltrim($x, "\0"), 32, "\0", STR_PAD_LEFT); };
+    return "$head.$body." . b64u($fix($r) . $fix($sv));
+}
+/** Empty push ("knock"); the service worker then reads api/push/inbox. 'ok' | 'gone' | 'error' */
+function push_knock(string $endpoint): string {
+    global $PUSH;
+    $url = clean_endpoint($endpoint);
+    if (!$url) return 'gone';
+    $u = parse_url($url);
+    try { $jwt = vapid_jwt('https://' . $u['host']); } catch (Throwable $e) { error_log($e->getMessage()); return 'error'; }
+    $headers = ['TTL: 86400', 'Urgency: high', 'Content-Length: 0', "Authorization: vapid t=$jwt, k={$PUSH['public']}"];
+    $target = $url;
+    if ($PUSH['testSink'] !== '') { $target = $PUSH['testSink']; $headers[] = 'X-Push-Endpoint: ' . $url; }
+    $ctx = stream_context_create(['http' => ['method' => 'POST', 'header' => implode("\r\n", $headers), 'content' => '', 'timeout' => 8, 'ignore_errors' => true]]);
+    $res = @file_get_contents($target, false, $ctx);
+    $status = 0;
+    if (isset($http_response_header[0]) && preg_match('#\s(\d{3})\s#', $http_response_header[0] . ' ', $m)) $status = (int) $m[1];
+    if ($status === 404 || $status === 410) return 'gone';
+    return $status >= 200 && $status < 300 ? 'ok' : 'error';
+}
+
+function scope_file(string $scope): string { global $SUBS; return "$SUBS/" . str_replace(':', '-', $scope) . '.json'; }
+function list_subs(string $scope): array { $all = read_json_file(scope_file($scope)); return is_array($all) ? $all : []; }
+function add_sub(string $scope, string $hash, array $sub): void {
+    $all = list_subs($scope);
+    if (count($all) >= 20 && !isset($all[$hash])) array_shift($all);
+    $all[$hash] = $sub;
+    write_atomic(scope_file($scope), json_encode($all, JSON_UNESCAPED_SLASHES));
+}
+function remove_sub(string $scope, string $hash): void {
+    global $INBOX;
+    $all = list_subs($scope);
+    unset($all[$hash]);
+    if ($all) write_atomic(scope_file($scope), json_encode($all, JSON_UNESCAPED_SLASHES)); else @unlink(scope_file($scope));
+    if (safe_name($hash)) @unlink("$INBOX/$hash.json");
+}
+function delete_subs(string $scope): void { foreach (array_keys(list_subs($scope)) as $h) remove_sub($scope, (string) $h); }
+
+/** System notification to every browser subscribed to $scope; how many got it */
+function push_all(string $scope, array $msg): int {
+    global $PUSH, $INBOX;
+    if (!$PUSH['enabled']) return 0;
+    $ok = 0;
+    foreach (list_subs($scope) as $hash => $sub) {
+        $hash = (string) $hash;
+        if (safe_name($hash)) write_atomic("$INBOX/$hash.json", json_encode($msg + ['at' => now_iso()], JSON_UNESCAPED_UNICODE));
+        $r = push_knock((string) ($sub['endpoint'] ?? ''));
+        if ($r === 'gone') remove_sub($scope, $hash); elseif ($r === 'ok') $ok++;
+    }
+    return $ok;
+}
+
+/** Same wording as server/mail.js (GIFT_TEXT, PUSH_TEXT) */
+function gift_text(string $theme, string $kind): array {
+    $t = [
+        'christmas' => ['unlocked' => ['Ježíšek ti nadělil dárek', 'Ježíšek ti nadělil dárek. Už je pod stromečkem a můžeš si ho rozbalit.'],
+                        'ring' => ['Cinkylink! Ježíšek zazvonil', 'Ježíšek právě zazvonil zvonečkem. Dárek už je pod stromečkem.']],
+        'birthday' => ['unlocked' => ['Máš narozeninový dárek', 'Narozeninový dárek je připravený a můžeš si ho rozbalit. Všechno nejlepší!'],
+                       'ring' => ['Frrrk! Někdo na tebe troubí', 'Někdo ti zatroubil na frkačku. Narozeninový dárek na tebe čeká.']],
+        'wedding' => ['unlocked' => ['Váš svatební dar je připravený', 'Svatební dar je připravený k rozbalení. Hodně štěstí na společné cestě!'],
+                      'ring' => ['Cink! Někdo si s vámi připíjí', 'Někdo vám cinkl skleničkou. Svatební dar na vás čeká.']],
+        'general' => ['unlocked' => ['Máš dárek', 'Někdo ti poslal dárek a teď už si ho můžeš rozbalit.'],
+                      'ring' => ['Ťuk ťuk! Dárek na tebe čeká', 'Někdo ti zaťukal na dveře. Dárek na tebe čeká.']],
+    ];
+    return ($t[$theme] ?? $t['christmas'])[$kind === 'ring' ? 'ring' : 'unlocked'];
+}
+function push_text(string $kind, string $theme, string $title): array {
+    if ($kind === 'viewed') return ['title' => 'Dárek si někdo otevřel', 'body' => "Odkaz na „{$title}“ se právě poprvé otevřel."];
+    if ($kind === 'opened') return ['title' => 'Dárek je rozbalený 🎁', 'body' => "„{$title}“ si obdarovaný právě rozbalil."];
+    $t = gift_text($theme, $kind);
+    return ['title' => $t[0], 'body' => $title !== '' ? "„{$title}“ " . ($kind === 'ring' ? 'na tebe čeká.' : 'už jde rozbalit.') : ($kind === 'ring' ? 'Dárek na tebe čeká.' : 'Dárek už jde rozbalit.')];
+}
+function mail_html(string $eyebrow, string $heading, string $lead, string $button, string $link, string $foot): string {
+    $h = function (string $v): string { return htmlspecialchars($v, ENT_QUOTES, 'UTF-8'); };
+    return '<!doctype html><html lang="cs"><body style="margin:0;padding:0;background:#05140e">'
+        . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#05140e;padding:32px 12px"><tr><td align="center">'
+        . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#0b241a;border:1px solid #d6b26a;font-family:Georgia,\'Times New Roman\',serif;color:#f3ead6">'
+        . '<tr><td style="padding:36px 32px 8px;text-align:center">'
+        . '<p style="margin:0;font:12px/1 Arial,sans-serif;letter-spacing:4px;text-transform:uppercase;color:#d6b26a">' . $h($eyebrow) . '</p>'
+        . '<h1 style="margin:14px 0 0;font-weight:normal;font-style:italic;font-size:30px;line-height:1.15;color:#f6e3ad">' . $h($heading) . '</h1></td></tr>'
+        . '<tr><td style="padding:18px 32px 0;font:16px/1.55 Arial,sans-serif;color:#e8e0cc;text-align:center">' . $h($lead) . '</td></tr>'
+        . '<tr><td align="center" style="padding:24px 32px"><a href="' . $h($link) . '" style="display:inline-block;padding:15px 26px;background:#d6b26a;color:#2a1a10;font:bold 13px/1 Arial,sans-serif;letter-spacing:3px;text-transform:uppercase;text-decoration:none;border-radius:3px">' . $h($button) . '</a></td></tr>'
+        . '<tr><td style="padding:0 32px 32px;font:13px/1.55 Arial,sans-serif;color:#b7b29a;text-align:center">' . $h($foot) . '</td></tr>'
+        . '</table></td></tr></table></body></html>';
+}
+/** [subject, text, html] */
+function gift_message(string $kind, string $theme, string $title, string $link, bool $hasPassword = false): array {
+    if ($kind === 'opened') {
+        $subject = "Dárek „{$title}“ je rozbalený";
+        $lead = "Obdarovaný si právě rozbalil tvůj dárek „{$title}“. V dílně uvidíš, kdy dárek otevřel a rozbalil.";
+        $foot = 'Tohle upozornění vypneš v dílně v okně Moje dílna.';
+        return [$subject, "Ahoj,\n\n$lead\n\n$link\n\n$foot\n", mail_html('Dárek je rozbalený', $title, $lead, 'Otevřít dílnu', $link, $foot)];
+    }
+    $t = gift_text($theme, $kind);
+    $foot = $hasPassword ? 'Dárek je zamčený heslem. Prozradí ti ho ten, kdo ho balil.' : 'Stačí kliknout na tlačítko.';
+    return [$title !== '' ? "{$t[0]}: $title" : $t[0], "Ahoj,\n\n{$t[1]}\n\n$link\n\n$foot\n", mail_html($t[0], $title !== '' ? $title : 'Dárek pro tebe', $t[1], 'Rozbalit dárek', $link, $foot)];
+}
+
+/** "unlocked" | "ring": e-mail to the recipient (if the box has the address) + push to their browsers */
+function notify_recipient(array $g, string $kind): array {
+    global $MAIL;
+    $title = $g['showTitle'] ? (string) $g['title'] : '';
+    $mailed = false;
+    if (($g['recipientEmail'] ?? '') !== '' && $MAIL['enabled']) {
+        try { send_mail((string) $g['recipientEmail'], gift_message($kind, $g['theme'], $title, $MAIL['appUrl'] . '/' . $g['code'], !empty($g['passwordHash']))); $mailed = true; }
+        catch (Throwable $e) { error_log("E-mail příjemci ($kind) se nepodařilo odeslat: " . $e->getMessage()); }
+    }
+    $pushed = push_all('g:' . $g['code'], push_text($kind, $g['theme'], $title) + ['url' => $g['code'], 'tag' => 'gift-' . $g['code']]);
+    return ['mailed' => $mailed, 'pushed' => $pushed];
+}
+/** First view / unwrap → tell the creator (push; for the unwrap also e-mail) */
+function track(array $g, string $kind): void {
+    global $MAIL;
+    if (bump_stats($g['code'], $kind) !== 1) return;
+    $title = (string) ($g['title'] ?: 'Dárek');
+    push_all('w:' . $g['owner'], push_text($kind === 'open' ? 'opened' : 'viewed', $g['theme'], $title) + ['url' => 'dilna', 'tag' => 'stat-' . $g['code']]);
+    if ($kind === 'open' && $MAIL['enabled']) {
+        $w = get_workshop((string) $g['owner']);
+        if ($w && ($w['email'] ?? '') !== '' && ($w['notifyOpen'] ?? true) !== false) {
+            try { send_mail((string) $w['email'], gift_message('opened', $g['theme'], $title, $MAIL['appUrl'] . '/dilna')); }
+            catch (Throwable $e) { error_log('E-mail tvůrci se nepodařilo odeslat: ' . $e->getMessage()); }
+        }
+    }
+}
+function set_due(string $code, ?int $ms): void {
+    global $DUE;
+    if (!safe_name($code)) return;
+    if ($ms === null) @unlink("$DUE/$code"); else write_atomic("$DUE/$code", (string) $ms);
+}
+/** Keeps the "notify at unlock" schedule in step with the box; returns the (maybe updated) box */
+function sync_due(?array $prev, array $next): array {
+    if (is_locked($next)) { set_due($next['code'], (int) (strtotime($next['openAt']) * 1000)); return $next; }
+    set_due($next['code'], null);
+    if ($prev && is_locked($prev) && empty($next['anytime']) && empty($next['notifiedAt'])) {
+        notify_recipient($next, 'unlocked');
+        $next['notifiedAt'] = now_iso();
+        put_gift($next);
+    }
+    return $next;
+}
+/** Boxes whose time has come: notify each once (rename = atomic claim) */
+function process_due(int $limit = 25): int {
+    global $DUE;
+    $sent = 0;
+    foreach (array_slice(scandir($DUE) ?: [], 0, 500) as $code) {
+        if ($sent >= $limit) break;
+        if (!safe_name($code) || !is_file("$DUE/$code")) continue;
+        if ((int) @file_get_contents("$DUE/$code") > time() * 1000) continue;
+        $g = get_gift($code);
+        if ($g && is_locked($g)) continue;
+        $claim = "$DUE/$code." . bin2hex(random_bytes(4)) . '.claim';
+        if (!@rename("$DUE/$code", $claim)) continue;
+        @unlink($claim);
+        if (!$g || !empty($g['notifiedAt'])) continue;
+        notify_recipient($g, 'unlocked');
+        $fresh = get_gift($code);
+        if ($fresh) { $fresh['notifiedAt'] = now_iso(); put_gift($fresh); }
+        $sent++;
+    }
+    return $sent;
+}
+/** At most once a minute, any request checks the schedule (in case no cron runs) */
+function maybe_process_due(): void {
+    global $DATA_DIR;
+    $f = "$DATA_DIR/.due-check";
+    if (is_file($f) && time() - (int) @filemtime($f) < 60) return;
+    @touch($f);
+    try { process_due(); } catch (Throwable $e) { error_log('Upozornění: ' . $e->getMessage()); }
+}
+function drop_gift_extras(string $code): void { set_due($code, null); delete_subs('g:' . $code); }
+
 function adjust_usage(string $id, int $delta): void {
     $w = get_workshop($id);
     if (!$w) return;
@@ -407,9 +851,31 @@ $seg = array_map('rawurldecode', $seg);
 $MB = function (int $b): int { return (int) round($b / 1048576); };
 
 try {
+    if (($seg[0] ?? '') !== 'cron') maybe_process_due();
+
     // CSRF guard: every state-changing call must come from our own pages (custom header)
     if ($method !== 'GET' && ($seg[0] ?? '') !== 'gifts' && ($_SERVER['HTTP_X_ADMIN'] ?? '') !== '1') {
         fail(403, 'forbidden', 'Chybí hlavička X-Admin.');
+    }
+
+    if (($seg[0] ?? '') === 'info' && count($seg) === 1 && $method === 'GET') {
+        send_json(['mail' => $MAIL['enabled'], 'signupCode' => $SIGNUP_CODE !== '', 'push' => $PUSH['enabled'] ? $PUSH['public'] : null]);
+    }
+    /* the service worker asks what the last (empty) push was about */
+    if (($seg[0] ?? '') === 'push' && ($seg[1] ?? '') === 'inbox' && $method === 'GET') {
+        $ep = clean_endpoint($_GET['e'] ?? null);
+        $msg = $ep ? read_json_file("$INBOX/" . hash('sha256', $ep) . '.json') : null;
+        header('Cache-Control: no-store');
+        send_json($msg ?: ['title' => 'Dárky', 'body' => 'Máš nové upozornění.', 'url' => '']);
+    }
+    /* cron: notify boxes that just unlocked (hosting cron / cron-job.org: …/api/cron?key=CRON_SECRET) */
+    if (($seg[0] ?? '') === 'cron' && count($seg) === 1 && ($method === 'GET' || $method === 'POST')) {
+        if ($CRON_SECRET !== '') {
+            $auth = (string) ($_SERVER['HTTP_AUTHORIZATION'] ?? '');
+            if (!hash_equals("Bearer $CRON_SECRET", $auth) && !hash_equals($CRON_SECRET, (string) ($_GET['key'] ?? ''))) fail(401, 'unauthorized', 'Špatný klíč pro cron.');
+        }
+        @touch("$DATA_DIR/.due-check");
+        send_json(['ok' => true, 'sent' => process_due(100)]);
     }
 
     /* ----- public: recipients ----- */
@@ -420,13 +886,17 @@ try {
         $isOwner = function () use ($g) { $w = current_workshop(); return $w && ($g['owner'] ?? null) === $w['id']; };
 
         if (count($seg) === 2 && $method === 'GET') {
+            // ?poll=1: the waiting page checking for a ring – not a new visit
+            if (!isset($_GET['poll']) && !$isOwner()) track($g, 'view');
             send_json([
                 'code' => $g['code'],
                 'title' => $g['showTitle'] ? $g['title'] : null,
                 'hasPassword' => !empty($g['passwordHash']),
                 'appearance' => $g['appearance'],
+                'theme' => $g['theme'],
                 'locked' => is_locked($g),
                 'openAt' => $g['anytime'] ? null : $g['openAt'],
+                'ringAt' => $g['ringAt'] ?? null,
                 'serverNow' => now_iso(),
             ]);
         }
@@ -441,7 +911,17 @@ try {
                 }
                 if (is_locked($g)) fail(423, 'locked', 'Dárek ještě nejde rozbalit.', ['openAt' => $g['openAt'], 'serverNow' => now_iso()]);
             }
+            if (!$preview && !$isOwner()) track($g, 'open');
             send_json(['gift' => public_gift($g), 'token' => sign_token($SECRET, gift_scope($g), GIFT_TTL), 'preview' => $preview]);
+        }
+        if (count($seg) === 3 && $seg[2] === 'subscribe' && ($method === 'POST' || $method === 'DELETE')) {
+            $ep = clean_endpoint(body_json()['endpoint'] ?? null);
+            if (!$ep) fail(400, 'bad_endpoint', 'Tenhle prohlížeč upozornění neumí.');
+            $h = hash('sha256', $ep);
+            if ($method === 'DELETE') { remove_sub('g:' . $g['code'], $h); send_json(['ok' => true]); }
+            if (!$PUSH['enabled']) fail(503, 'push_off', 'Upozornění tady nejsou zapnutá.');
+            add_sub('g:' . $g['code'], $h, ['endpoint' => $ep, 'at' => now_iso()]);
+            send_json(['ok' => true]);
         }
         if (count($seg) === 3 && $seg[2] === 'photo' && $method === 'GET') {
             if (!$isOwner()) {
@@ -480,8 +960,10 @@ try {
             $w = ['id' => random_id(9), 'name' => $name !== '' ? $name : 'Moje dílna', 'email' => $email, 'keyHash' => '', 'keyEnc' => '', 'usedBytes' => 0, 'createdAt' => $now, 'updatedAt' => $now];
             $key = new_key_for($w);
             put_workshop($w);
+            index_email($w['id'], '', $email);
+            $mailed = mail_link($w, 'welcome', $key);
             sign_in($w);
-            send_json(['workshop' => workshop_view($w, $key)], 201);
+            send_json(['workshop' => workshop_view($w, $key), 'mailed' => $mailed], 201);
         }
         if (($seg[1] ?? '') === 'login' && $method === 'POST') {
             $b = body_json();
@@ -496,6 +978,20 @@ try {
             send_json(['workshop' => workshop_view($w, $key)]);
         }
         if (($seg[1] ?? '') === 'logout' && $method === 'POST') { sign_out(); send_json(['ok' => true]); }
+        // lost link: same answer whether or not the address has a workshop
+        if (($seg[1] ?? '') === 'recover' && $method === 'POST') {
+            if (!$MAIL['enabled']) fail(503, 'mail_off', 'Posílání e-mailů tady není zapnuté.');
+            $email = clean_email(body_json()['email'] ?? '');
+            if (!$email) fail(400, 'bad_email', 'Napiš e-mailovou adresu, kterou máš u dílny uloženou.');
+            $started = microtime(true);
+            foreach (array_slice(get_email_owners(email_hash($email)), 0, 5) as $id) {
+                $o = get_workshop($id);
+                if ($o && ($o['email'] ?? '') !== '' && email_hash((string) $o['email']) === email_hash($email)) mail_link($o, 'recover');
+            }
+            $left = 0.7 - (microtime(true) - $started);
+            if ($left > 0) usleep((int) ($left * 1e6));
+            send_json(['ok' => true]);
+        }
 
         $w = current_workshop();
         if (!$w) fail(401, 'unauthorized', 'Otevři svou dílnu tajným odkazem.');
@@ -506,10 +1002,32 @@ try {
             $email = array_key_exists('email', $b) ? clean_email($b['email']) : $w['email'];
             if ($email === null) fail(400, 'bad_email', 'Tohle nevypadá jako e-mailová adresa.');
             if (array_key_exists('name', $b)) { $n = clean_name($b['name']); $w['name'] = $n !== '' ? $n : 'Moje dílna'; }
+            if (array_key_exists('theme', $b)) $w['theme'] = theme_of($b['theme']);
+            if (array_key_exists('notifyOpen', $b)) $w['notifyOpen'] = (bool) $b['notifyOpen'];
+            $oldEmail = (string) ($w['email'] ?? '');
             $w['email'] = $email;
             $w['updatedAt'] = now_iso();
             put_workshop($w);
+            index_email($w['id'], $oldEmail, $email);
             send_json(['workshop' => workshop_view($w)]);
+        }
+        if (($seg[1] ?? '') === 'subscribe' && ($method === 'POST' || $method === 'DELETE')) {
+            $ep = clean_endpoint(body_json()['endpoint'] ?? null);
+            if (!$ep) fail(400, 'bad_endpoint', 'Tenhle prohlížeč upozornění neumí.');
+            $h = hash('sha256', $ep);
+            if ($method === 'DELETE') { remove_sub('w:' . $w['id'], $h); send_json(['ok' => true]); }
+            if (!$PUSH['enabled']) fail(503, 'push_off', 'Upozornění tady nejsou zapnutá.');
+            add_sub('w:' . $w['id'], $h, ['endpoint' => $ep, 'at' => now_iso()]);
+            send_json(['ok' => true]);
+        }
+        if (($seg[1] ?? '') === 'send-link' && $method === 'POST') {
+            if (!$MAIL['enabled']) fail(503, 'mail_off', 'Posílání e-mailů tady není zapnuté.');
+            if (($w['email'] ?? '') === '') fail(400, 'no_email', 'Nejdřív ulož e-mail, na který odkaz poslat.');
+            if (!empty($w['mailedAt']) && time() - strtotime((string) $w['mailedAt']) < $MAIL['gap']) {
+                fail(429, 'too_soon', 'E-mail jsme poslali před chvílí. Zkus to zase za minutu.');
+            }
+            if (!mail_link($w, 'link')) fail(502, 'mail_failed', 'E-mail se nepodařilo odeslat. Zkus to prosím později.');
+            send_json(['ok' => true, 'email' => $w['email']]);
         }
         if (($seg[1] ?? '') === 'rotate-key' && $method === 'POST') {
             $old = (string) $w['keyHash'];
@@ -517,13 +1035,16 @@ try {
             $w['updatedAt'] = now_iso();
             put_workshop($w);
             delete_key_owner($old);
+            $mailed = mail_link(array_merge($w, ['mailedAt' => null]), 'rotated', $key);
             sign_in($w);
-            send_json(['workshop' => workshop_view($w, $key)]);
+            send_json(['workshop' => workshop_view($w, $key), 'mailed' => $mailed]);
         }
         if (count($seg) === 1 && $method === 'DELETE') {
-            foreach (gifts_by_owner($w['id']) as $g) delete_gift($g['code']);
+            foreach (gifts_by_owner($w['id']) as $g) { delete_gift($g['code']); drop_gift_extras($g['code']); }
+            delete_subs('w:' . $w['id']);
             foreach (files_by_owner($w['id']) as $f) delete_file((string) $f['id']);
             delete_key_owner((string) $w['keyHash']);
+            index_email($w['id'], (string) ($w['email'] ?? ''), '');
             delete_workshop($w['id']);
             sign_out();
             send_json(['ok' => true]);
@@ -574,7 +1095,7 @@ try {
             if (count($seg) === 2 && $method === 'GET') {
                 $all = gifts_by_owner($w['id']);
                 usort($all, function ($a, $b) { return strcmp((string) $b['updatedAt'], (string) $a['updatedAt']); });
-                send_json(['gifts' => array_map('summary', $all), 'serverNow' => now_iso()]);
+                send_json(['gifts' => array_map(function ($g) { return summary($g) + ['stats' => get_stats($g['code'])]; }, $all), 'serverNow' => now_iso()]);
             }
             if (count($seg) === 2 && $method === 'POST') {
                 if (count(gifts_by_owner($w['id'])) >= $MAX_GIFTS) fail(409, 'limit', "V jedné dílně může být nejvýš $MAX_GIFTS boxů.");
@@ -584,13 +1105,16 @@ try {
                     'code' => unique_code(), 'owner' => $w['id'],
                     'title' => s($b['title'] ?? '', 120) ?: 'Nový dárek',
                     'showTitle' => true, 'message' => '', 'signature' => '',
-                    'passwordHash' => null, 'anytime' => false, 'openAt' => default_open_at(),
+                    'passwordHash' => null, 'anytime' => false,
+                    'openAt' => (is_string($b['openAt'] ?? null) && strtotime($b['openAt']) !== false) ? gmdate('Y-m-d\TH:i:s.000\Z', strtotime($b['openAt'])) : default_open_at(),
                     'manualUnlock' => false,
+                    'theme' => theme_of($b['theme'] ?? ($w['theme'] ?? null)),
                     'appearance' => sanitize_appearance($b['appearance'] ?? null),
                     'reveal' => in_array($b['reveal'] ?? null, REVEALS, true) ? $b['reveal'] : 'all',
                     'items' => [], 'photo' => null, 'createdAt' => $now, 'updatedAt' => $now,
                 ];
                 put_gift($g);
+                sync_due(null, $g);
                 send_json(admin_view($g), 201);
             }
 
@@ -599,7 +1123,7 @@ try {
             // someone else's box looks exactly like a missing one
             if (!$g || ($g['owner'] ?? null) !== $w['id']) fail(404, 'not_found', 'Box nenalezen.');
 
-            if (count($seg) === 3 && $method === 'GET') send_json(admin_view($g));
+            if (count($seg) === 3 && $method === 'GET') send_json(admin_view($g) + ['stats' => get_stats($g['code'])]);
 
             if (count($seg) === 3 && $method === 'PUT') {
                 $b = body_json();
@@ -633,6 +1157,7 @@ try {
                     'openAt' => $openAt !== false ? iso($openAt) : $g['openAt'],
                     'appearance' => array_key_exists('appearance', $b) ? sanitize_appearance($b['appearance']) : $g['appearance'],
                     'reveal' => in_array($b['reveal'] ?? null, REVEALS, true) ? $b['reveal'] : $g['reveal'],
+                    'theme' => array_key_exists('theme', $b) ? theme_of($b['theme']) : $g['theme'],
                     'items' => $items,
                     'photo' => array_key_exists('photo', $b) ? sanitize_photo($b['photo'], $g['photo'], $w['id']) : $g['photo'],
                     'updatedAt' => now_iso(),
@@ -645,13 +1170,28 @@ try {
                         $next['passwordHash'] = hash_password($pw);
                     }
                 }
+                if (array_key_exists('recipientEmail', $b)) {
+                    $re = clean_email($b['recipientEmail']);
+                    if ($re === null) fail(400, 'bad_email', 'E-mail obdarovaného nevypadá jako e-mailová adresa.');
+                    $next['recipientEmail'] = $re;
+                }
+                // locked again (a new unlock time): the recipient should hear about it when that time comes
+                $next['notifiedAt'] = is_locked($next) ? null : ($g['notifiedAt'] ?? null);
                 put_gift($next);
                 remove_orphan_files($w['id'], files_of($g), files_of($next));
-                send_json(admin_view($next));
+                $next = sync_due($g, $next);
+                send_json(admin_view($next) + ['stats' => get_stats($next['code'])]);
             }
 
+            if (count($seg) === 4 && $seg[3] === 'ring' && $method === 'POST') {
+                if (!empty($g['ringAt']) && time() - strtotime((string) $g['ringAt']) < $RING_GAP) fail(429, 'too_soon', 'Zvonilo se před chvílí. Zkus to zase za minutu.');
+                $ringAt = now_iso();
+                put_gift(array_merge($g, ['ringAt' => $ringAt]));
+                send_json(['ok' => true, 'ringAt' => $ringAt] + notify_recipient($g, 'ring'));
+            }
             if (count($seg) === 3 && $method === 'DELETE') {
                 delete_gift($g['code']);
+                drop_gift_extras($g['code']);
                 remove_orphan_files($w['id'], files_of($g), []);
                 send_json(['ok' => true]);
             }
@@ -659,7 +1199,9 @@ try {
             if (count($seg) === 4 && $seg[3] === 'regenerate-code' && $method === 'POST') {
                 $next = array_merge($g, ['code' => unique_code(), 'updatedAt' => now_iso()]);
                 delete_gift($g['code']);
+                drop_gift_extras($g['code']);
                 put_gift($next);
+                sync_due(null, $next);
                 send_json(admin_view($next));
             }
         }

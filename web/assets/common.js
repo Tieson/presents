@@ -102,3 +102,30 @@
 
   window.XD = { api, normalizePassword, normalizeCode, formatLong, formatShort, formatWithYear, plural, formatSize, relative, esc, store, copy, appBase };
 })();
+
+/* ---------- system notifications (Web Push) ---------- */
+window.XDpush = (function () {
+  const supported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  // iPhone/iPad: Web Push works only once the page is added to the home screen (iOS 16.4+)
+  const iosNeedsInstall = () => /iP(hone|ad|od)/.test(navigator.userAgent) && !navigator.standalone && !matchMedia("(display-mode: standalone)").matches;
+  let reg;
+  const register = () => (reg ??= navigator.serviceWorker.register("sw.js"));
+  const keyBytes = b64 => Uint8Array.from(atob(b64.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((b64.length + 3) % 4)), c => c.charCodeAt(0));
+  async function current() {
+    if (!supported()) return null;
+    const r = await navigator.serviceWorker.getRegistration();
+    return r ? r.pushManager.getSubscription() : null;
+  }
+  /** Asks for permission (must run from a click) and returns the push endpoint */
+  async function subscribe(publicKey) {
+    if (!supported()) throw new Error(iosNeedsInstall() ? "Na iPhonu nejdřív přidej stránku na plochu (Sdílet → Přidat na plochu) a otevři ji odtamtud." : "Tenhle prohlížeč upozornění neumí.");
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") throw new Error("Upozornění jsou v prohlížeči zakázaná. Povol je v nastavení stránky.");
+    const r = await register();
+    await navigator.serviceWorker.ready;
+    let sub = await r.pushManager.getSubscription();
+    if (!sub) sub = await r.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(publicKey) });
+    return sub.endpoint;
+  }
+  return { supported, iosNeedsInstall, subscribe, current, register };
+})();
