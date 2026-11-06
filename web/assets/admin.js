@@ -95,18 +95,33 @@ import "./themes.js";
   }
   function renderSwitch() {
     $("themeSwitch").innerHTML = Object.entries(TH.THEMES).map(([k, t]) => {
-      const n = list.filter(g => (g.theme || "christmas") === k).length;
+      const n = list.filter(g => TH.keyOf(g.theme) === k).length;
       return `<button type="button" role="radio" data-k="${k}" aria-checked="${k === theme}" title="${esc(t.name)}">${TH.ICONS[k]}<span class="tname">${esc(t.name)}</span>${n ? `<span class="count">${n}</span>` : ""}</button>`;
     }).join("");
   }
+  /** Switching the occasion: the open box belongs to the old one, so leave it (ask if it has unsaved edits) */
+  async function switchTheme(k) {
+    if (k === theme) return;
+    if (cur && TH.keyOf(cur.theme) !== k) {
+      if (isDirty() && !(await confirmDialog({ title: "Zahodit neuložené změny?", text: `V boxu „${draft.title}“ máš neuložené změny.`, ok: "Zahodit" }))) return;
+      cur = null; draft = null;
+      showEmptyEditor();
+      history.replaceState(null, "", location.pathname + location.search);
+    }
+    applyTheme(k, { save: true });
+    // on a wide screen open the first box of that occasion right away
+    const first = list.find(g => TH.keyOf(g.theme) === k);
+    if (!cur && first && !matchMedia("(max-width: 900px)").matches) select(first.code, true);
+  }
   $("themeSwitch").addEventListener("click", e => {
     const b = e.target.closest("[data-k]");
-    if (b && b.dataset.k !== theme) applyTheme(b.dataset.k, { save: true });
+    if (b) switchTheme(b.dataset.k);
   });
-  $("themeSwitch").addEventListener("keydown", e => {
+  $("themeSwitch").addEventListener("keydown", async e => {
     if (!["ArrowRight", "ArrowLeft"].includes(e.key)) return;
+    e.preventDefault();
     const keys = Object.keys(TH.THEMES), i = keys.indexOf(theme);
-    applyTheme(keys[(i + (e.key === "ArrowRight" ? 1 : -1) + keys.length) % keys.length], { save: true });
+    await switchTheme(keys[(i + (e.key === "ArrowRight" ? 1 : -1) + keys.length) % keys.length]);
     $("themeSwitch").querySelector('[aria-checked="true"]')?.focus();
   });
   $("fTheme").innerHTML = Object.entries(TH.THEMES).map(([k, t]) => `<option value="${k}">${esc(t.name)}</option>`).join("");
@@ -390,7 +405,7 @@ import "./themes.js";
 
   function renderList() {
     const ul = $("giftList");
-    const shown = list.filter(g => (g.theme || "christmas") === theme);
+    const shown = list.filter(g => TH.keyOf(g.theme) === theme);
     renderSwitch();
     $("shelfCount").textContent = shown.length ? `${shown.length} ${plural(shown.length, "box", "boxy", "boxů")}` : "";
     $("shelfEmpty").hidden = shown.length > 0;
@@ -1241,6 +1256,7 @@ import "./themes.js";
     if (!pw.on && cur.hasPassword) body.password = null;
     if (pw.on && pw.value) { newPw = normalizePassword(pw.value); body.password = newPw; }
 
+    const movedTo = draft.theme !== TH.keyOf(cur.theme) ? draft.theme : null;   // the box was moved to another occasion
     saving = true; updateDirty();
     try {
       const g = await api(`admin/gifts/${encodeURIComponent(cur.code)}`, { method: "PUT", body });
@@ -1249,7 +1265,7 @@ import "./themes.js";
       saving = false;
       setCurrent(g);
       await loadList();
-      if (g.theme !== theme) applyTheme(g.theme, { save: true });     // moved to another occasion: follow it
+      if (movedTo && movedTo !== theme) applyTheme(movedTo, { save: true });   // the user moved it: follow it
       toast("Uloženo");
     } catch (err) {
       saving = false; updateDirty();

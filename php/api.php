@@ -142,7 +142,8 @@ const DECOS = ['none', 'holly', 'pine', 'candy', 'bauble', 'star', 'bells', 'ora
 const PHOTO_FRAMES = ['polaroid', 'postcard'];
 const REVEALS = ['all', 'sequential', 'choice'];
 const THEMES = ['christmas', 'birthday', 'wedding', 'general'];   // occasion of a box (and the workshop's current one)
-function theme_of($v): string { return in_array($v, THEMES, true) ? $v : 'christmas'; }
+/** unknown / not chosen → "general" (neutral); boxes saved before occasions existed were Christmas boxes */
+function theme_of($v, string $fallback = 'general'): string { return in_array($v, THEMES, true) ? $v : $fallback; }
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
 /** Content type from the first bytes (never trust the browser's word) */
@@ -185,7 +186,7 @@ function with_defaults(?array $g): ?array {
     $g['appearance'] = sanitize_appearance($g['appearance'] ?? null);
     $g['reveal'] = in_array($g['reveal'] ?? null, REVEALS, true) ? $g['reveal'] : 'all';
     $g['photo'] = $g['photo'] ?? null;
-    $g['theme'] = theme_of($g['theme'] ?? null);
+    $g['theme'] = theme_of($g['theme'] ?? null, 'christmas');
     return $g;
 }
 

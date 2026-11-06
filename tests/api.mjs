@@ -129,8 +129,11 @@ export async function run(base) {
   r = await A("GET", "admin/gifts"); ok(r.d.gifts.length === 1 && r.d.gifts[0].code === code2 && r.d.gifts[0].appearance, "list has only the renamed box");
 
   /* ---------- occasions ---------- */
+  r = await B("GET", "workshop"); ok(r.d.workshop.theme === "general", "new workshop starts neutral (Pro radost)");
+  r = await B("POST", "admin/gifts", {}); ok(r.d.theme === "general", "new box without an occasion → Pro radost");
+  await B("DELETE", "admin/gifts/" + r.d.code);
   r = await A("PUT", "workshop", { theme: "wedding" }); ok(r.s === 200 && r.d.workshop.theme === "wedding", "workshop remembers the chosen occasion");
-  r = await A("PUT", "workshop", { theme: "halloween" }); ok(r.d.workshop.theme === "christmas", "unknown occasion → Vánoce");
+  r = await A("PUT", "workshop", { theme: "halloween" }); ok(r.d.workshop.theme === "general", "unknown occasion → Pro radost (neutral)");
   r = await A("POST", "admin/gifts", { theme: "birthday", openAt: "2031-05-01T16:00:00.000Z" });
   const codeT = r.d.code;
   ok(r.s === 201 && r.d.theme === "birthday" && r.d.openAt === "2031-05-01T16:00:00.000Z" && r.d.locked === true, "box with an occasion and its own unlock time");
