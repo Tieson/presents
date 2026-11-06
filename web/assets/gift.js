@@ -107,23 +107,36 @@ import "./themes.js";
 
   /* ---------- occasion: palette, particles and every text that depends on it ---------- */
   function applyTheme(k) {
+    const was = document.documentElement.dataset.theme;
     T = TH.applyPage(k);
+    if (was && was !== document.documentElement.dataset.theme && !document.documentElement.classList.contains("pending-theme")) {
+      // palette and box colours glide (CSS), the texts fade through
+      const intro = document.querySelector(".intro");
+      intro.classList.remove("swap-in"); void intro.offsetWidth; intro.classList.add("swap-in");
+    }
     $("eyebrow").textContent = T.eyebrow;
     document.querySelector(".intro h1").innerHTML = `<span class="line">${esc(T.h1[0])}</span><em class="foil">${esc(T.h1[1])}</em>`;
     $("pwNote").textContent = T.pwNote;
     footline();
-    document.documentElement.classList.remove("pending-theme");
+  }
+  /** first paint of a gift link: show the box's style right away, without gliding from the neutral one */
+  function revealTheme() {
+    const html = document.documentElement;
+    if (!html.classList.contains("pending-theme")) return;
+    void getComputedStyle(html).getPropertyValue("--velvet");      // settle the new colours while transitions are off
+    void getComputedStyle(gift).getPropertyValue("--pp-a");
+    requestAnimationFrame(() => html.classList.remove("pending-theme"));
   }
 
-  /* home page (no box yet): neutral, unless this visitor already works with an occasion */
-  const savedTheme = () => { try { return localStorage.getItem("xd:theme"); } catch { return null; } };
-  function applyHome(k) {
-    applyTheme(k);
+  /* home page and code entry (no box yet): always neutral; the box's own style blends in once its code is known */
+  function applyHome() {
+    applyTheme(TH.DEFAULT);
     $("eyebrow").textContent = T.home.eyebrow;
     document.querySelector(".intro h1").innerHTML = `<span class="line">${esc(T.home.h1[0])}</span><em class="foil">${esc(T.home.h1[1])}</em>`;
     $("lede").textContent = T.home.lede;
     document.title = T.home.title;
     W.apply(gift, T.appearance);
+    revealTheme();
   }
 
   /* ---------- the visitor's own workshop (session cookie), asked once ---------- */
@@ -146,12 +159,9 @@ import "./themes.js";
   function showHub() {
     show("hub");
     say("");
-    applyHome(savedTheme());
+    applyHome();
     wrapLinks($("hubState")).then(w => {
-      if (w) {
-        if (w.theme && w.theme !== document.documentElement.dataset.theme && !states.hub.hidden) applyHome(w.theme);
-        $("hubNote").innerHTML = `Vítej zpátky. Tvoje dílna <strong>${esc(w.name)}</strong> na tebe čeká.`;
-      }
+      if (w) $("hubNote").innerHTML = `Vítej zpátky. Tvoje dílna <strong>${esc(w.name)}</strong> na tebe čeká.`;
       scheduleFit();
     });
   }
@@ -164,7 +174,7 @@ import "./themes.js";
   function showCodeEntry(message) {
     show("code");
     say(message);
-    applyHome(savedTheme());
+    applyHome();
     setTimeout(() => $("codeInput").focus({ preventScroll: true }), 50);
   }
 
@@ -341,6 +351,7 @@ import "./themes.js";
       offset = Date.parse(meta.serverNow) - Date.now();
       applyTheme(meta.theme);
       W.apply(gift, meta.appearance);
+      revealTheme();
       document.title = meta.title ? `${meta.title} · ${T.docTitle}` : T.docTitle;
       setLede();
       lastRing = meta.ringAt;
