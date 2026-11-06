@@ -8,6 +8,12 @@
 <meta name="robots" content="noindex">
 <meta name="theme-color" content="#05140e">
 <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<script>
+  // a gift link: keep the Christmas texts hidden until the box's own occasion is known (no flash)
+  if (/^\/?([^/]*\/)*[a-zA-Z-]{12,16}\/?$/.test(location.pathname) || /[?&](d|kod)=/.test(location.search)) document.documentElement.classList.add("pending-theme");
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400;0,6..96,600;1,6..96,400;1,6..96,500&family=Jost:wght@300;400;500&display=swap">
@@ -29,7 +35,9 @@
 
   <div class="scene" id="scene">
   <section class="present" id="present" aria-label="Zabalený dárek">
-    <div class="gift-slot">
+    <div class="gift-slot" id="giftSlot">
+    <div class="delivery" id="delivery" aria-hidden="true"></div>
+    <div class="ring-fx" id="ringFx" aria-hidden="true"></div>
     <button class="gift breathe" id="gift" type="button" aria-label="Zabalený dárek">
       <span class="gift-shadow"></span>
       <span class="base">
@@ -90,13 +98,14 @@
             <div><b data-u="m">00</b><span>minut</span></div>
             <div><b data-u="s">00</b><span>sekund</span></div>
           </div>
+          <button class="tag-link notify-btn" type="button" id="notifyLocked" hidden></button>
         </div>
 
         <form id="openForm" class="tag-state" autocomplete="off" novalidate hidden>
           <p class="tag-title" id="openTitle">Heslo pro dárek</p>
           <div id="pwWrap" class="pw-wrap">
             <label for="pwInput" class="visually-hidden">Heslo pro dárek</label>
-            <p class="tag-note">Ježíšek ti ho pošeptal. Napiš ho sem.</p>
+            <p class="tag-note" id="pwNote">Ježíšek ti ho pošeptal. Napiš ho sem.</p>
             <input id="pwInput" class="tag-input" type="text" placeholder="tvoje heslo" spellcheck="false" autocapitalize="off" autocomplete="off">
           </div>
           <button class="btn" type="submit" id="openBtn">Rozbalit dárek</button>

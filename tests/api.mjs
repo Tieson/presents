@@ -128,6 +128,27 @@ export async function run(base) {
   r = await anon("GET", "gifts/" + code); ok(r.s === 404, "old code 404");
   r = await A("GET", "admin/gifts"); ok(r.d.gifts.length === 1 && r.d.gifts[0].code === code2 && r.d.gifts[0].appearance, "list has only the renamed box");
 
+  /* ---------- occasions ---------- */
+  r = await A("PUT", "workshop", { theme: "wedding" }); ok(r.s === 200 && r.d.workshop.theme === "wedding", "workshop remembers the chosen occasion");
+  r = await A("PUT", "workshop", { theme: "halloween" }); ok(r.d.workshop.theme === "christmas", "unknown occasion → Vánoce");
+  r = await A("POST", "admin/gifts", { theme: "birthday", openAt: "2031-05-01T16:00:00.000Z" });
+  const codeT = r.d.code;
+  ok(r.s === 201 && r.d.theme === "birthday" && r.d.openAt === "2031-05-01T16:00:00.000Z" && r.d.locked === true, "box with an occasion and its own unlock time");
+  r = await anon("GET", "gifts/" + codeT); ok(r.d.theme === "birthday", "recipient gets the occasion before opening");
+  r = await A("PUT", "admin/gifts/" + codeT, { title: "Oslava", anytime: true, theme: "wedding", items: [] }); ok(r.d.theme === "wedding" && r.d.locked === false, "occasion can be changed");
+  r = await A("PUT", "admin/gifts/" + codeT, { title: "Oslava", anytime: true, items: [] }); ok(r.d.theme === "wedding", "occasion kept when not sent");
+
+  /* ---------- who looked (views + unwraps) ---------- */
+  r = await A("GET", "admin/gifts/" + codeT); ok(r.d.stats?.views === 1 && r.d.stats.opens === 0, "first view counted (recipient), creator's own not");
+  await anon("GET", "gifts/" + codeT); await A("GET", "gifts/" + codeT);
+  r = await anon("POST", `gifts/${codeT}/open`, {}); ok(r.s === 200 && r.d.gift.theme === "wedding", "unwrap");
+  await A("POST", `gifts/${codeT}/open`, { preview: true });
+  r = await A("GET", "admin/gifts/" + codeT);
+  ok(r.d.stats.views === 2 && r.d.stats.opens === 1 && r.d.stats.firstOpenAt && r.d.stats.firstViewAt <= r.d.stats.lastViewAt, "views + unwraps recorded, creator's preview not");
+  r = await A("GET", "admin/gifts"); const rowT = r.d.gifts.find(g => g.code === codeT);
+  ok(rowT?.stats?.opens === 1 && rowT.locked === false && rowT.theme === "wedding", "list shows unwraps, lock state and occasion");
+  r = await A("DELETE", "admin/gifts/" + codeT); ok(r.s === 200, "delete box (its stats go too)");
+
   /* ---------- rotate the secret link ---------- */
   r = await A("POST", "workshop/rotate-key"); const keyA2 = r.d.workshop?.key;
   ok(r.s === 200 && keyA2 && keyA2 !== keyA, "rotate key → new link");

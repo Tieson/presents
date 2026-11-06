@@ -29,4 +29,15 @@ return [
     'SMTP_USER' => '',            // obvykle celá e-mailová adresa
     'SMTP_PASS' => '',
     // 'MAIL_TRANSPORT' => 'mail', // místo SMTP použít PHP funkci mail() (když hosting SMTP nenabízí)
+
+    // ---- Upozornění v prohlížeči / systému (Web Push, nepovinné) ----
+    // Klíče vygeneruj příkazem `npm run vapid` (nebo na https://vapidkeys.com) a vlož sem.
+    'VAPID_PUBLIC_KEY' => '',
+    'VAPID_PRIVATE_KEY' => '',
+    'VAPID_SUBJECT' => 'mailto:tvuj@email.cz',
+
+    // ---- Cron: upozornění v čas odemčení ----
+    // Nastav na hostingu cron (každých 5–15 minut): curl -s "https://tvuj-web.cz/api/cron?key=TADY_CRON_SECRET"
+    // Bez cronu se upozornění pošlou při nejbližší návštěvě webu (nejvýš jednou za minutu se kontroluje).
+    'CRON_SECRET' => '',
 ];

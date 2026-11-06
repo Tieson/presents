@@ -1,6 +1,7 @@
 import "./common.js";
 import "./wrap.js";
 import "./fx.js";
+import "./themes.js";
 
 /* Screen height for the one-screen layout.
    Pinned to the real window height on load and on rotation / browser-bar changes.
@@ -34,6 +35,8 @@ import "./fx.js";
 /* Recipient page */
 (function () {
   const { api, normalizePassword, normalizeCode, formatLong, plural, formatSize, esc, store } = window.XD;
+  const TH = window.XDthemes;
+  let T = TH.get(TH.DEFAULT);          // texts + style of the box's occasion
   const W = window.XDwrap;
   const $ = id => document.getElementById(id);
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -75,7 +78,7 @@ import "./fx.js";
     if (present.hidden || opened) return;
     const vh = window.XDvh?.() || innerHeight;
     const wide = innerWidth >= 860 || document.documentElement.classList.contains("land");
-    const w = gift.getBoundingClientRect().width;
+    const w = gift.offsetWidth;                                       // layout size: ignores the delivery / wiggle transforms
     const free = scene.clientHeight - present.offsetHeight;          // > 0: room left in the scene
     const over = Math.max(0, stage.offsetHeight - vh);                // > 0: stage taller than the screen
     const slotH = giftSlot.offsetHeight;
@@ -99,15 +102,17 @@ import "./fx.js";
   const now = () => Date.now() + offset;
   const key = k => `xd:${k}:${code}`;   // t = token, n = revealed count, m = chosen mode
 
-  /* ---------- footline: days to Christmas Eve ---------- */
-  function footline() {
-    const el = $("footline");
-    const d = new Date(), today = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-    const eve = new Date(d.getFullYear(), 11, 24);
-    const days = Math.round((eve - today) / 86400000);
-    if (days > 0) el.innerHTML = `Do Štědrého večera ${days >= 2 && days <= 4 ? "zbývají" : "zbývá"} <b>${days}</b> ${plural(days, "den", "dny", "dní")}`;
-    else if (days === 0) el.innerHTML = "Dnes je <b>Štědrý den</b>";
-    else el.innerHTML = "Krásné <b>vánoční svátky</b>";
+  /* ---------- footline (Christmas: days to Christmas Eve) ---------- */
+  function footline() { $("footline").innerHTML = T.footline(new Date()); }
+
+  /* ---------- occasion: palette, particles and every text that depends on it ---------- */
+  function applyTheme(k) {
+    T = TH.applyPage(k);
+    $("eyebrow").textContent = T.eyebrow;
+    document.querySelector(".intro h1").innerHTML = `<span class="line">${esc(T.h1[0])}</span><em class="foil">${esc(T.h1[1])}</em>`;
+    $("pwNote").textContent = T.pwNote;
+    footline();
+    document.documentElement.classList.remove("pending-theme");
   }
 
   /* ---------- the visitor's own workshop (session cookie), asked once ---------- */
@@ -125,12 +130,12 @@ import "./fx.js";
   }
 
   /* ---------- states ---------- */
-  const LEDE = "Pod stromečkem na tebe něco čeká. Rozbal si svůj dárek.";
 
   /* landing page: nothing to unwrap yet, so offer both ways */
   function showHub() {
     show("hub");
     say("");
+    applyTheme(TH.DEFAULT);
     $("lede").textContent = "Zabal blízkým dárek, nebo si rozbal ten svůj.";
     W.apply(gift, W.DEFAULT);
     document.title = "Vánoční dárky";
@@ -148,19 +153,149 @@ import "./fx.js";
   function showCodeEntry(message) {
     show("code");
     say(message);
-    $("lede").textContent = LEDE;
+    applyTheme(TH.DEFAULT);
+    $("lede").textContent = T.lede;
     W.apply(gift, W.DEFAULT);
     setTimeout(() => $("codeInput").focus({ preventScroll: true }), 50);
   }
 
   function setLede() {
-    if (meta?.title) $("lede").innerHTML = `<strong>${esc(meta.title)}</strong><br>Pod stromečkem na tebe něco čeká.`;
+    $("lede").innerHTML = meta?.title ? `<strong>${esc(meta.title)}</strong><br>${esc(T.ledeTitle)}` : esc(T.lede);
   }
+
+  /* ---------- delivery: how the present arrives (once per box and page load) ---------- */
+  let delivered = null;
+  const slot = $("giftSlot"), deliveryEl = $("delivery");
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const BALLOON_COLORS = [["#ff7aa8", "#c23a76"], ["#ffd166", "#d49a1c"], ["#5ad1c7", "#1f8f86"]];
+
+  async function deliver(kind) {
+    if (reduceMotion || opened) return;
+    present.classList.add("delivering");
+    slot.className = "gift-slot";
+    deliveryEl.innerHTML = "";
+    try {
+      if (kind === "jezisek") {
+        // Ježíšek flies in as a light with a glittering trail, leaves the present and rings the bell
+        slot.classList.add("d-hidden");
+        await wait(250);
+        const r = gift.getBoundingClientRect();
+        const toX = r.left + r.width / 2, toY = r.top + r.height * .45;
+        await (window.XDfx?.comet(toX < innerWidth / 2 ? innerWidth + 40 : -40, innerHeight * .08, toX, toY, 1700) ?? wait(0));
+        slot.classList.remove("d-hidden");
+        slot.classList.add("d-appear");
+        ringFx(true);
+      } else if (kind === "balloons") {
+        deliveryEl.innerHTML = BALLOON_COLORS.map(([a, b], i) =>
+          `<span class="balloon b${i}" style="--bl:${a};--bd:${b}"><i></i></span>`).join("");
+        slot.classList.add("d-float");
+        await wait(2300);
+        slot.classList.add("d-release");
+        await wait(200);
+        const r = gift.getBoundingClientRect();
+        window.XDfx?.burst(r.left + r.width / 2, r.top + r.height * .2, 60);
+        await wait(1500);
+      } else if (kind === "petals") {
+        slot.classList.add("d-bloom");
+        await wait(500);
+        const r = gift.getBoundingClientRect();
+        window.XDfx?.burst(r.left + r.width / 2, r.top + r.height * .3, 90);
+        await wait(1100);
+      } else {
+        slot.classList.add("d-drop");
+        await wait(720);
+        const r = gift.getBoundingClientRect();
+        window.XDfx?.burst(r.left + r.width / 2, r.top + r.height, 50);
+        await wait(600);
+      }
+    } finally {
+      present.classList.remove("delivering");
+      deliveryEl.innerHTML = "";
+      setTimeout(() => slot.classList.remove("d-appear", "d-float", "d-release", "d-bloom", "d-drop", "d-hidden"), 900);
+    }
+  }
+
+  /* ---------- ring: the creator pressed "Zazvonit zvonečkem" (or the delivery rings) ---------- */
+  let lastRing = null, audio;
+  function chime() {
+    try {
+      audio ??= new (window.AudioContext || window.webkitAudioContext)();
+      if (audio.state !== "running") return;          // browsers allow sound only after a tap
+      const t0 = audio.currentTime;
+      [1318.5, 1760, 2637].forEach((f, i) => {
+        const o = audio.createOscillator(), g = audio.createGain();
+        o.type = "sine"; o.frequency.value = f;
+        g.gain.setValueAtTime(0, t0 + i * .12);
+        g.gain.linearRampToValueAtTime(.12 / (i + 1), t0 + i * .12 + .01);
+        g.gain.exponentialRampToValueAtTime(.0001, t0 + i * .12 + 1.6);
+        o.connect(g).connect(audio.destination);
+        o.start(t0 + i * .12); o.stop(t0 + i * .12 + 1.7);
+      });
+    } catch { /* no sound */ }
+  }
+  addEventListener("pointerdown", () => { try { audio ??= new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); } catch { /* ignore */ } }, { once: true });
+
+  function ringFx(quiet = false) {
+    if (opened) return;
+    const el = $("ringFx");
+    el.innerHTML = TH.RING_ICONS[document.documentElement.dataset.theme] || TH.RING_ICONS.christmas;
+    el.classList.remove("on"); void el.offsetWidth; el.classList.add("on");
+    gift.classList.remove("wiggle"); void gift.offsetWidth; gift.classList.add("wiggle");
+    if (!quiet) { say(T.ring.note); chime(); navigator.vibrate?.([80, 60, 80]); }
+    setTimeout(() => el.classList.remove("on"), 2600);
+  }
+
+  /* poll for rings (and for the unlock) while the box waits to be opened */
+  let pollTimer = null;
+  function startPolling() {
+    clearInterval(pollTimer);
+    if (preview) return;
+    pollTimer = setInterval(async () => {
+      if (document.hidden || opened || !code) return;
+      try {
+        const m = await api(`gifts/${code}?poll=1`);
+        if (m.ringAt && m.ringAt !== lastRing) { lastRing = m.ringAt; ringFx(); }
+        if (meta?.locked && !m.locked) { meta = m; showOpen(); }
+      } catch { /* try again later */ }
+    }, 20000);
+  }
+  navigator.serviceWorker?.addEventListener("message", e => { if (e.data?.type === "xd:notification" && code && !opened) load(); });
+
+  /* ---------- "let me know when I can unwrap it" (system notification) ---------- */
+  let info = null;
+  const subKey = () => `xd:sub:${code}`;
+  async function setupNotify() {
+    const btn = $("notifyLocked");
+    info ??= await api("info").catch(() => ({}));
+    const can = !!info.push && !preview && (window.XDpush.supported() || window.XDpush.iosNeedsInstall());
+    btn.hidden = !can;
+    if (!can) return;
+    const on = store(subKey()) && window.Notification?.permission === "granted";
+    btn.innerHTML = on ? "✓ Upozorním tě, až půjde rozbalit" : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0"/></svg><span>Upozornit mě<span class="long">, až půjde rozbalit</span></span>`;
+    btn.disabled = !!on;
+    scheduleFit();
+  }
+  $("notifyLocked").addEventListener("click", async () => {
+    const btn = $("notifyLocked");
+    btn.disabled = true;
+    try {
+      const endpoint = await window.XDpush.subscribe(info.push);
+      await api(`gifts/${code}/subscribe`, { method: "POST", body: { endpoint } });
+      store(subKey(), "1");
+      say("Hotovo. Až dárek půjde rozbalit, přijde ti upozornění.");
+    } catch (err) {
+      say(err.message);
+      btn.disabled = false;
+    }
+    setupNotify();
+  });
 
   function showLocked(openAt) {
     show("locked");
     say("");
     $("lockedWhen").textContent = formatLong(openAt);
+    setupNotify();
     const target = Date.parse(openAt);
     const set = (u, v) => { const el = document.querySelector(`[data-u="${u}"]`); if (el.textContent !== v) el.textContent = v; };
     clearInterval(tick);
@@ -195,12 +330,17 @@ import "./fx.js";
     try {
       meta = await api(`gifts/${code}`);
       offset = Date.parse(meta.serverNow) - Date.now();
+      applyTheme(meta.theme);
       W.apply(gift, meta.appearance);
-      document.title = meta.title ? `${meta.title} · Vánoční dárek` : "Vánoční dárek";
+      document.title = meta.title ? `${meta.title} · ${T.docTitle}` : T.docTitle;
       setLede();
+      lastRing = meta.ringAt;
       if (meta.locked && !preview) showLocked(meta.openAt);
       else showOpen();
+      if (delivered !== code) { delivered = code; deliver(T.delivery); }
+      startPolling();
     } catch (err) {
+      document.documentElement.classList.remove("pending-theme");
       if (err.status === 404) showCodeEntry(`Dárek s kódem ${code} jsme nenašli. Zkontroluj, jestli je kód opsaný správně.`);
       else { show("loading"); say(err.message); }
     }
@@ -299,7 +439,7 @@ import "./fx.js";
     return p.frame === "postcard"
       ? `<figure class="keepsake postcard" style="${style}">
           <a class="pc-img" href="${src}" target="_blank" rel="noopener" aria-label="Otevřít pohled v plné velikosti"><img src="${src}" alt="${esc(p.caption || "Pohled")}"></a>
-          <div class="pc-back"><span class="pc-stamp" aria-hidden="true">✦</span>${cap || `<figcaption class="pc-empty">Veselé Vánoce</figcaption>`}</div>
+          <div class="pc-back"><span class="pc-stamp" aria-hidden="true">✦</span>${cap || `<figcaption class="pc-empty">${esc(T.postcard)}</figcaption>`}</div>
         </figure>`
       : `<figure class="keepsake polaroid" style="${style}">
           <a href="${src}" target="_blank" rel="noopener" aria-label="Otevřít fotku v plné velikosti"><img src="${src}" alt="${esc(p.caption || "Fotka")}"></a>
@@ -367,7 +507,7 @@ import "./fx.js";
       ${opened.preview ? `<p class="preview-banner">Náhled pro tvůrce. Příjemce uvidí totéž až po zadání hesla a v nastavený čas.</p>` : ""}
       <article class="card">
         <p class="eyebrow">${all ? (g.title ? "Rozbaleno" : "Tvůj dárek") : mode ? `Rozbaleno ${n} z ${total()}` : "Tvůj dárek"}</p>
-        <h2>${esc(g.title || "Veselé Vánoce")}</h2>
+        <h2>${esc(g.title || T.defaultTitle)}</h2>
         <div class="ornament" aria-hidden="true">✦</div>
         ${g.message ? `<p class="note">${esc(g.message)}</p>` : ""}
         ${g.photo && (all || done) ? photoHtml(g, all ? .35 : 0) : ""}
@@ -390,7 +530,7 @@ import "./fx.js";
       ? "Ať se k poukazům kdykoli vrátíš, ulož si tuhle stránku do záložek nebo na plochu."
       : `Ať se k poukazům kdykoli vrátíš, ulož si tuhle stránku do záložek (<kbd>${mac ? "⌘" : "Ctrl"}</kbd> + <kbd>D</kbd>).`;
     return `<aside class="cta" aria-labelledby="ctaTitle">
-      <p class="eyebrow ruled">Ježíškova dílna</p>
+      <p class="eyebrow ruled">${esc(T.workshop.join(" "))}</p>
       <h3 id="ctaTitle">Chceš taky někoho <em>obdarovat?</em></h3>
       <p class="cta-text">Zabal vlastní online dárek: pár překvapení, poukazy v PDF, heslo a čas, kdy půjde rozbalit. Zdarma a bez registrace.</p>
       <div class="cta-mail" id="ctaMail" hidden>

@@ -22,12 +22,34 @@
   --warn: #9a5b10;
   --warn-soft: #f4e1bf;
   --danger: #a3202f;
+  --glow-top: #174233;
+  --glow-bottom: #2a0a12;
 
   --f-display: "Bodoni Moda", "Didot", "Bodoni 72", Georgia, serif;
   --f-body: "Jost", "Futura", "Century Gothic", system-ui, sans-serif;
   --f-mono: "DM Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
 
   color-scheme: dark;
+}
+
+/* ---------- occasions (themes.js sets <html data-theme>) ---------- */
+[data-theme="birthday"] {
+  --velvet: #161437; --velvet-2: #221e50; --velvet-deep: #0b0a22;
+  --burgundy: #a3245e; --burgundy-2: #c23a76; --burgundy-deep: #5a1035;
+  --gold: #f0c26a; --gold-light: #ffe6a8; --gold-dark: #9b7330;
+  --glow-top: #2d2870; --glow-bottom: #4d0f3c;
+}
+[data-theme="wedding"] {
+  --velvet: #2a2124; --velvet-2: #3a2d31; --velvet-deep: #160f12;
+  --burgundy: #8a4f5e; --burgundy-2: #a5687a; --burgundy-deep: #4b2632;
+  --gold: #e3c9a0; --gold-light: #f8ead2; --gold-dark: #9a7a50;
+  --glow-top: #4c3b3f; --glow-bottom: #3d1d28;
+}
+[data-theme="general"] {
+  --velvet: #0c2a30; --velvet-2: #123a42; --velvet-deep: #051519;
+  --burgundy: #9c3f2c; --burgundy-2: #b8563f; --burgundy-deep: #55200f;
+  --gold: #e2b866; --gold-light: #f8e2ad; --gold-dark: #8f6a2a;
+  --glow-top: #134850; --glow-bottom: #3a1a10;
 }
 
 * { box-sizing: border-box; }
@@ -38,8 +60,8 @@ html, body { min-height: 100%; }
 body {
   margin: 0;
   background:
-    radial-gradient(120% 70% at 50% -10%, #174233 0%, transparent 60%),
-    radial-gradient(90% 60% at 50% 115%, #2a0a12 0%, transparent 70%),
+    radial-gradient(120% 70% at 50% -10%, var(--glow-top) 0%, transparent 60%),
+    radial-gradient(90% 60% at 50% 115%, var(--glow-bottom) 0%, transparent 70%),
     var(--velvet-deep);
   background-color: var(--velvet-deep);
   background-attachment: fixed;

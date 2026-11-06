@@ -17,6 +17,12 @@ zadá heslo a ve stanovený čas si dárek „rozbalí“. Dárky se balí v **J
 - **Rozbalování:** najednou, postupně (každá položka je malá krabička) nebo ať si vybere příjemce. Postup se příjemci pamatuje i po zavření stránky. „Zabalit znovu“ ho vynuluje.
 - Náhled jako příjemce pro přihlášeného tvůrce (obejde heslo i zámek).
 - **Úvodní stránka** je rozcestník: „Zabalit dárek“ (→ dílna) nebo „Mám kód dárku“. Po rozbalení celého dárku příjemce uvidí pozvánku zabalit vlastní dárek a tip uložit si stránku do záložek.
+- **Příležitosti:** Vánoce, narozeniny, svatba a „Pro radost“ (cokoli jiného). Přepínají se nahoře v dílně. Každá má vlastní název dílny (Ježíškova, Narozeninová, Svatební, Dárková), barvy, texty, výchozí vzhled krabice, částice v pozadí (sníh, konfety, okvětní lístky, jiskry) a **doručení**: na Vánoce přiletí Ježíšek jako světýlko a zazvoní zvoneček, na narozeniny dárek přiletí na balóncích, na svatbu vykvete ze světla, jinak spadne a odrazí se. Box si příležitost pamatuje, takže ji příjemce vidí vždy ve stylu, ve kterém byl zabalený.
+- **Kdo dárek viděl:** dílna ukazuje, kolikrát a kdy se odkaz otevřel a kdy byl dárek rozbalen. Tvůrcovy vlastní návštěvy a náhledy se nepočítají. V seznamu boxů je u každého zámek (zamčeno/odemčeno) a stav „Otevřeno 2×, nerozbaleno“ nebo „Rozbaleno 24. 12. 18:03“.
+- **Upozornění:**
+  - E-mail obdarovanému **v čas odemčení** (s odkazem, bez hesla), případně hned po ručním odemčení.
+  - Tlačítko **Zazvonit zvonečkem** (u narozenin „Zatroubit na frkačku“, u svatby „Cinknout skleničkou“, jinak „Zaťukat na dveře“) pošle e-mail i systémové upozornění. Kdo má dárek otevřený, tomu zazvoní přímo na stránce.
+  - Obdarovaný si na čekající stránce může zapnout **upozornění v prohlížeči/systému**, tvůrce v dílně taky (přijde, když někdo dárek poprvé otevře a rozbalí). Tvůrci navíc přijde e-mail při prvním rozbalení (jde vypnout).
 - **E-maily s odkazem do dílny (nepovinné, přes SMTP).** Po založení přijde odkaz e-mailem. V dílně ho jde poslat znovu a po výměně přijde nový. Kdo odkaz ztratí, nechá si ho poslat na uložený e-mail. Bez nastaveného SMTP se e-mail jen uloží a nic se neposílá.
 
 ## Struktura
@@ -107,6 +113,15 @@ Nepovinné. Zapnou se, když jsou nastavené `SMTP_HOST`, `MAIL_FROM` a `APP_URL
 V PHP se to samé vyplní v `config.php`. Když hosting SMTP nenabízí, jde v PHP nastavit `MAIL_TRANSPORT => 'mail'` (funkce `mail()`). Node verze posílá přes [nodemailer](https://nodemailer.com/), PHP má vlastního malého SMTP klienta bez závislostí. Texty e-mailů jsou v `server/mail.js` a `php/api.php` (stejné znění).
 
 Test: `npm test` vyzkouší e-maily proti lokálnímu SMTP serveru. Pro PHP spusť server s `SMTP_HOST=127.0.0.1 SMTP_PORT=2525 SMTP_SECURE=none APP_URL=https://darky.example.cz MAIL_GAP_SECONDS=1 MAIL_FROM=…` a pak `npm test -- http://127.0.0.1:8080 --mail 2525`.
+
+## Upozornění (Web Push) a cron
+
+**Web Push** (systémová upozornění) se zapne s klíči `VAPID_PUBLIC_KEY` a `VAPID_PRIVATE_KEY` (vygeneruje je `npm run vapid`) a s `VAPID_SUBJECT` (`mailto:…`). Push nenese žádná data, jen „zaklepe“. Service worker si text vyzvedne z `api/push/inbox`, takže není potřeba šifrovat obsah a Node i PHP jsou stejně jednoduché. Server posílá pushe jen na známé push služby (Google, Mozilla, Apple, Microsoft), nic jiného nevolá. Na iPhonu fungují jen ze stránky přidané na plochu (iOS 16.4+), stránka to uživateli řekne.
+
+**E-maily v čas odemčení** hlídá endpoint `api/cron`:
+- **Vercel:** `vercel.json` má cron jednou denně v 17:00 UTC (= 18:00 na Štědrý večer, víc tarif Hobby nedovolí). Nastav `CRON_SECRET`, Vercel ho posílá sám. Pro přesnější časy přidej externí cron, třeba [cron-job.org](https://cron-job.org) každých 5 minut na `https://tvuj-web/api/cron?key=CRON_SECRET`.
+- **PHP hosting:** cron na hostingu, např. `*/5 * * * * curl -s "https://tvuj-web/api/cron?key=CRON_SECRET"`.
+- Bez cronu se upozornění pošlou při nejbližší návštěvě webu (každý požadavek nejvýš jednou za minutu zkontroluje, co je na řadě). Každé upozornění odejde jen jednou, i když cron běží víckrát naráz.
 
 ## Bezpečnost v kostce
 

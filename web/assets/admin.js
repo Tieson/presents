@@ -1,11 +1,13 @@
 import "./common.js";
 import "./wrap.js";
 import "./fx.js";
+import "./themes.js";
 
 /* Ježíškova dílna – admin */
 (function () {
   const { api: rawApi, normalizePassword, formatShort, formatWithYear, relative, plural, formatSize, esc, copy, appBase } = window.XD;
   const W = window.XDwrap;
+  const TH = window.XDthemes;
   const $ = id => document.getElementById(id);
   const styleVars = a => Object.entries(W.vars(a)).map(([k, v]) => `${k}:${v}`).join(";");
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -66,6 +68,50 @@ import "./fx.js";
   /* ---------- workshop: create / open with the secret link / account ---------- */
   let ws = null;                                   // current workshop { id, name, email, key, … }
 
+  /* ---------- occasion: Christmas / birthday / wedding / just because ---------- */
+  const SHELF = {
+    christmas: ["Pod stromečkem", "Pod stromečkem je zatím prázdno.", "Zabalit první dárek"],
+    birthday: ["Na oslavu", "Zatím tu není žádný narozeninový dárek.", "Zabalit dárek k narozeninám"],
+    wedding: ["Na svatbu", "Zatím tu není žádný svatební dar.", "Připravit svatební dar"],
+    general: ["Pro radost", "Zatím tu není žádný dárek.", "Zabalit první dárek"]
+  };
+  let theme = (() => { try { return TH.keyOf(localStorage.getItem("xd:theme")); } catch { return TH.DEFAULT; } })();
+  let TT = TH.get(theme);
+  function applyTheme(k, { save = false } = {}) {
+    theme = TH.keyOf(k);
+    TT = TH.applyPage(theme);
+    try { localStorage.setItem("xd:theme", theme); } catch { /* ignore */ }
+    const [a, b] = TT.workshop;
+    $("brandName").innerHTML = `${esc(a)} <em>${esc(b)}</em>`;
+    $("welcomeTitle").innerHTML = `${esc(a)} <em class="foil">${esc(b)}</em>`;
+    document.title = ws ? `${ws.name} · ${a} ${b}` : `${a} ${b}`;
+    const [eyebrow, empty, cta] = SHELF[theme];
+    $("shelfEyebrow").textContent = eyebrow;
+    $("shelfEmptyText").textContent = empty;
+    $("newGiftEmpty").textContent = cta;
+    renderSwitch();
+    if (ws) renderList();
+    if (save && ws) api("workshop", { method: "PUT", body: { theme } }).then(r => { ws = r.workshop; }, () => {});
+  }
+  function renderSwitch() {
+    $("themeSwitch").innerHTML = Object.entries(TH.THEMES).map(([k, t]) => {
+      const n = list.filter(g => (g.theme || "christmas") === k).length;
+      return `<button type="button" role="radio" data-k="${k}" aria-checked="${k === theme}" title="${esc(t.name)}">${TH.ICONS[k]}<span class="tname">${esc(t.name)}</span>${n ? `<span class="count">${n}</span>` : ""}</button>`;
+    }).join("");
+  }
+  $("themeSwitch").addEventListener("click", e => {
+    const b = e.target.closest("[data-k]");
+    if (b && b.dataset.k !== theme) applyTheme(b.dataset.k, { save: true });
+  });
+  $("themeSwitch").addEventListener("keydown", e => {
+    if (!["ArrowRight", "ArrowLeft"].includes(e.key)) return;
+    const keys = Object.keys(TH.THEMES), i = keys.indexOf(theme);
+    applyTheme(keys[(i + (e.key === "ArrowRight" ? 1 : -1) + keys.length) % keys.length], { save: true });
+    $("themeSwitch").querySelector('[aria-checked="true"]')?.focus();
+  });
+  $("fTheme").innerHTML = Object.entries(TH.THEMES).map(([k, t]) => `<option value="${k}">${esc(t.name)}</option>`).join("");
+  applyTheme(theme);                // the last occasion used on this device, until the workshop says otherwise
+
   /* what the server can do (e-mails are optional) */
   let info = { mail: false };
   rawApi("info").then(i => { info = i || info; applyInfo(); }, () => {});
@@ -98,9 +144,11 @@ import "./fx.js";
   }
 
   function setWorkshop(w) {
+    const first = !ws || ws.id !== w.id;
     ws = w;
     $("brandSub").textContent = w.name;
-    document.title = `${w.name} · Ježíškova dílna`;
+    if (first && w.theme) applyTheme(w.theme);
+    else document.title = `${w.name} · ${TT.workshop.join(" ")}`;
   }
 
   async function busy(btn, fn) {
@@ -198,6 +246,11 @@ import "./fx.js";
     $("aName").value = ws.name || "";
     $("aEmail").value = ws.email || "";
     $("acctSend").hidden = !(info.mail && ws.email);
+    $("aNotifyOpen").checked = ws.notifyOpen !== false;
+    $("aNotifyOpen").disabled = !(info.mail && ws.email);
+    $("aNotifyHint").textContent = !info.mail ? "Posílání e-mailů zatím není na serveru zapnuté."
+      : !ws.email ? "Nejdřív níž vyplň svůj e-mail." : `Napíšeme na ${ws.email}, jen při prvním rozbalení každého dárku.`;
+    renderPushBtn();
     const L = ws.limits || {};
     $("acctUsage").textContent = `Boxy ${ws.giftCount ?? list.length} z ${L.gifts ?? "?"} · PDF ${formatSize(ws.usedBytes || 0)} z ${formatSize(L.storageBytes || 0)}`;
   }
@@ -221,6 +274,41 @@ import "./fx.js";
       } catch (err) { if (err.status !== 401) toast(err.message, true); }
     });
   });
+
+  $("aNotifyOpen").addEventListener("change", async e => {
+    try { setWorkshop((await api("workshop", { method: "PUT", body: { notifyOpen: e.target.checked } })).workshop); toast("Uloženo"); }
+    catch (err) { e.target.checked = !e.target.checked; if (err.status !== 401) toast(err.message, true); }
+  });
+
+  /* system notifications for the creator: "someone opened / unwrapped your box" */
+  async function renderPushBtn() {
+    const btn = $("acctPush"), hint = $("acctPushHint");
+    const can = !!info.push && (window.XDpush.supported() || window.XDpush.iosNeedsInstall());
+    btn.hidden = !can; hint.hidden = !can;
+    if (!can) return;
+    let on = false;
+    try { on = !!(await window.XDpush.current()) && localStorage.getItem("xd:wsPush") === ws.id && Notification.permission === "granted"; } catch { /* ignore */ }
+    btn.textContent = on ? "Vypnout upozornění v tomto prohlížeči" : "Zapnout upozornění v tomto prohlížeči";
+    btn.dataset.on = on ? "1" : "";
+    hint.textContent = on ? "Tenhle prohlížeč ti dá vědět, když někdo poprvé otevře nebo rozbalí tvůj dárek."
+      : "Upozornění přijde i do systému (telefon, počítač), když někdo poprvé otevře nebo rozbalí tvůj dárek.";
+  }
+  $("acctPush").addEventListener("click", () => busy($("acctPush"), async () => {
+    try {
+      if ($("acctPush").dataset.on) {
+        const sub = await window.XDpush.current();
+        if (sub) await api("workshop/subscribe", { method: "DELETE", body: { endpoint: sub.endpoint } });
+        try { localStorage.removeItem("xd:wsPush"); } catch { /* ignore */ }
+        toast("Upozornění v tomto prohlížeči jsou vypnutá.");
+      } else {
+        const endpoint = await window.XDpush.subscribe(info.push);
+        await api("workshop/subscribe", { method: "POST", body: { endpoint } });
+        try { localStorage.setItem("xd:wsPush", ws.id); } catch { /* ignore */ }
+        toast("Hotovo. Dáme ti vědět, až si někdo dárek otevře.");
+      }
+    } catch (err) { if (err.status !== 401) toast(err.message, true); }
+    renderPushBtn();
+  }));
 
   $("acctRotate").addEventListener("click", async () => {
     if (!(await confirmDialog({
@@ -290,19 +378,29 @@ import "./fx.js";
     return { ok: false, text: `Zamčeno do ${formatShort(g.openAt)}` };
   }
 
+  const lockSvg = open => open
+    ? `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 4.9-.7"/></svg>`
+    : `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>`;
+
   function renderList() {
     const ul = $("giftList");
-    $("shelfCount").textContent = list.length ? `${list.length} ${plural(list.length, "box", "boxy", "boxů")}` : "";
-    $("shelfEmpty").hidden = list.length > 0;
-    ul.innerHTML = list.map(g => {
+    const shown = list.filter(g => (g.theme || "christmas") === theme);
+    renderSwitch();
+    $("shelfCount").textContent = shown.length ? `${shown.length} ${plural(shown.length, "box", "boxy", "boxů")}` : "";
+    $("shelfEmpty").hidden = shown.length > 0;
+    ul.innerHTML = shown.map(g => {
       const st = statusOf(g);
+      const s = g.stats || {};
+      const seen = s.opens ? `<span class="flag unwrapped" title="Poprvé rozbaleno ${esc(formatShort(s.firstOpenAt))}">Rozbaleno ${esc(formatShort(s.firstOpenAt))}</span>`
+        : s.views ? `<span class="flag seen" title="Naposledy ${esc(formatShort(s.lastViewAt))}">Otevřeno ${s.views}×, nerozbaleno</span>` : "";
       return `<li>
         <button type="button" class="gl-item${cur && g.code === cur.code ? " active" : ""}${st.ok ? " open" : ""}" data-code="${esc(g.code)}">
-          <span class="gl-box rb-${W.normalize(g.appearance).ribbonStyle}" style="--w:46px;${esc(styleVars(g.appearance))}" aria-hidden="true"></span>
+          <span class="gl-box rb-${W.normalize(g.appearance).ribbonStyle}" style="--w:46px;${esc(styleVars(g.appearance))}" aria-hidden="true"><span class="lock-dot">${lockSvg(st.ok)}</span></span>
           <span class="gl-title">${esc(g.title)}</span>
           <span class="gl-sub"><span class="mono">${esc(g.code)}</span><span>${g.itemCount} ${plural(g.itemCount, "položka", "položky", "položek")}</span></span>
           <span class="gl-flags">
-            <span class="flag ${st.ok ? "ok" : "wait"}">${esc(st.text)}</span>
+            <span class="flag lock ${st.ok ? "ok" : "wait"}" title="${st.ok ? "Obdarovaný si dárek může rozbalit" : "Obdarovaný si ho zatím nerozbalí"}">${lockSvg(st.ok)}${esc(st.text)}</span>
+            ${seen}
             <span class="flag">${g.hasPassword ? "s heslem" : "bez hesla"}</span>
             ${g.showTitle ? "" : `<span class="flag">název skrytý</span>`}
           </span>
@@ -348,7 +446,8 @@ import "./fx.js";
       anytime: !!g.anytime, openAt: g.openAt, manualUnlock: !!g.manualUnlock,
       appearance: W.normalize(g.appearance), reveal: W.REVEALS[g.reveal] ? g.reveal : "all",
       items: g.items.map(i => ({ id: i.id, name: i.name, description: i.description, file: i.file ? { ...i.file } : null })),
-      photo: g.photo ? { file: { ...g.photo.file }, caption: g.photo.caption || "", frame: g.photo.frame || "polaroid" } : null
+      photo: g.photo ? { file: { ...g.photo.file }, caption: g.photo.caption || "", frame: g.photo.frame || "polaroid" } : null,
+      theme: TH.keyOf(g.theme), recipientEmail: g.recipientEmail || ""
     };
   }
 
@@ -388,7 +487,7 @@ import "./fx.js";
   function detectMode() {
     if (draft.anytime) return "anytime";
     const d = new Date(draft.openAt);
-    if (d.getMonth() === 11 && d.getDate() === 24 && d.getHours() === 18 && d.getMinutes() === 0) return "christmas";
+    if (draft.theme === "christmas" && d.getMonth() === 11 && d.getDate() === 24 && d.getHours() === 18 && d.getMinutes() === 0) return "christmas";
     return "custom";
   }
 
@@ -411,6 +510,10 @@ import "./fx.js";
     $("xmasLabel").textContent = `${formatWithYear(xmasIso())}`;
     document.querySelectorAll('input[name="reveal"]').forEach(r => { r.checked = r.value === draft.reveal; });
     $("fSeal").value = draft.appearance.seal;
+    $("fTheme").value = draft.theme;
+    $("fRecipientEmail").value = draft.recipientEmail;
+    renderOccasion();
+    renderStats();
     renderLook();
     photoUpload = null;
     renderPhoto();
@@ -452,6 +555,58 @@ import "./fx.js";
     head.className = `pill ${st.ok ? "ok" : ""}`;
     head.textContent = st.text;
   }
+
+  /* texts that follow the box's occasion: unlock choices, message hint, the ring button */
+  function renderOccasion() {
+    const T = TH.get(draft.theme);
+    const card = v => document.querySelector(`input[name="when"][value="${v}"]`).closest(".when-card");
+    card("christmas").hidden = draft.theme !== "christmas";
+    card("custom").querySelector(".wc-title").textContent = T.when.custom[0];
+    card("custom").querySelector(".wc-sub").textContent = T.when.custom[1];
+    card("anytime").querySelector(".wc-sub").textContent = T.when.anytime;
+    $("fMessage").placeholder = T.messagePh;
+    $("ringLabel").textContent = T.ring.label;
+    $("ringIcon").innerHTML = TH.RING_ICONS[draft.theme];
+    $("recipientHint").textContent = info.mail
+      ? "V čase odemčení mu pošleme e-mail s odkazem na dárek. Heslo v e-mailu nebude."
+      : "Posílání e-mailů zatím není na serveru zapnuté. Adresa se uloží a použije, až ho zapneš.";
+  }
+  $("fTheme").addEventListener("change", () => {
+    draft.theme = TH.keyOf($("fTheme").value);
+    if (draft.theme !== "christmas" && mode === "christmas") { mode = "custom"; document.querySelectorAll('input[name="when"]').forEach(r => { r.checked = r.value === "custom"; }); }
+    renderOccasion(); renderWhen(); updateDirty();
+  });
+  $("fRecipientEmail").addEventListener("input", e => { draft.recipientEmail = e.target.value; updateDirty(); });
+
+  /* who looked: views and unwraps (the creator's own visits don't count) */
+  function renderStats() {
+    const s = cur.stats || {};
+    const eye = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>`;
+    const box = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3.5" y="9" width="17" height="11.5" rx="1.5"/><path d="M2.5 6.5h19V9h-19zM12 6.5v14"/></svg>`;
+    const parts = [];
+    if (!s.views && !s.opens) parts.push(`<span class="stat">${eye}Odkaz zatím nikdo neotevřel</span>`);
+    else {
+      parts.push(`<span class="stat">${eye}<span>Otevřeno <b>${s.views}×</b>${s.firstViewAt ? `, poprvé ${esc(formatShort(s.firstViewAt))}` : ""}${s.views > 1 ? `, naposledy ${esc(formatShort(s.lastViewAt))}` : ""}</span></span>`);
+      parts.push(s.opens
+        ? `<span class="stat ok">${box}<span><b>Rozbaleno</b> ${esc(formatShort(s.firstOpenAt))}${s.opens > 1 ? ` (${s.opens}×)` : ""}</span></span>`
+        : `<span class="stat">${box}Zatím nerozbaleno</span>`);
+    }
+    if (cur.notifiedAt) parts.push(`<span class="stat">✉ Upozornění odešlo ${esc(formatShort(cur.notifiedAt))}</span>`);
+    $("statsLine").innerHTML = parts.join("");
+  }
+
+  /* "Zazvonit zvonečkem" */
+  $("ringBtn").addEventListener("click", () => busy($("ringBtn"), async () => {
+    if (isDirty() && draft.recipientEmail.trim() !== (cur.recipientEmail || "")) { toast("Nejdřív ulož e-mail obdarovaného.", true); return; }
+    const btn = $("ringBtn");
+    btn.classList.remove("ringing"); void btn.offsetWidth; btn.classList.add("ringing");
+    try {
+      const r = await api(`admin/gifts/${encodeURIComponent(cur.code)}/ring`, { method: "POST" });
+      const T = TH.get(cur.theme);
+      const how = [r.mailed && "e-mailem", r.pushed && `upozorněním (${r.pushed}×)`].filter(Boolean).join(" a ");
+      toast(how ? `${T.ring.done} Dali jsme vědět ${how}.` : `${T.ring.done} Uslyší to, pokud má dárek otevřený.`);
+    } catch (err) { if (err.status !== 401) toast(err.message, true); }
+  }));
 
   function updateDirty() {
     const dirty = isDirty();
@@ -1072,7 +1227,9 @@ import "./fx.js";
       appearance: { ...draft.appearance, seal: draft.appearance.seal.trim() },
       reveal: draft.reveal,
       items: draft.items.map(i => ({ id: i.id, name: i.name.trim(), description: i.description.trim(), file: i.file ? { id: i.file.id } : null })),
-      photo: draft.photo ? { file: { id: draft.photo.file.id }, caption: draft.photo.caption.trim(), frame: draft.photo.frame } : null
+      photo: draft.photo ? { file: { id: draft.photo.file.id }, caption: draft.photo.caption.trim(), frame: draft.photo.frame } : null,
+      theme: draft.theme,
+      recipientEmail: draft.recipientEmail.trim()
     };
     let newPw = null;
     if (!pw.on && cur.hasPassword) body.password = null;
@@ -1086,6 +1243,7 @@ import "./fx.js";
       saving = false;
       setCurrent(g);
       await loadList();
+      if (g.theme !== theme) applyTheme(g.theme, { save: true });     // moved to another occasion: follow it
       toast("Uloženo");
     } catch (err) {
       saving = false; updateDirty();
@@ -1105,12 +1263,17 @@ import "./fx.js";
   async function createGift() {
     if (isDirty() && !(await confirmDialog({ title: "Zahodit neuložené změny?", text: `V boxu „${draft.title}“ máš neuložené změny.`, ok: "Zahodit" }))) return;
     try {
-      const g = await api("admin/gifts", { method: "POST", body: { title: "Nový dárek" } });
+      // other occasions than Christmas: tomorrow at 18:00 as a starting point
+      const t = new Date(now()); t.setDate(t.getDate() + 1); t.setHours(18, 0, 0, 0);
+      const g = await api("admin/gifts", { method: "POST", body: {
+        title: "Nový dárek", theme, appearance: TT.appearance,
+        ...(theme === "christmas" ? {} : { openAt: t.toISOString() })
+      } });
       await loadList();
       setCurrent(g);
       $("layout").classList.add("show-editor");
-      const t = $("fTitle");
-      t.focus(); t.select();
+      const ti = $("fTitle");
+      ti.focus(); ti.select();
       toast(`Box zabalen. Kód ${g.code}`);
     } catch (err) { if (err.status !== 401) toast(err.message, true); }
   }

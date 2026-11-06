@@ -7,6 +7,8 @@
 <meta name="robots" content="noindex, nofollow">
 <meta name="theme-color" content="#05140e">
 <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400;0,6..96,600;1,6..96,400;1,6..96,500&family=DM+Mono:wght@400;500&family=Jost:wght@300;400;500&display=swap">
@@ -22,8 +24,8 @@
   <div class="welcome">
     <header class="welcome-head">
       <span class="monogram" aria-hidden="true"></span>
-      <p class="eyebrow ruled">Vánoční dárky</p>
-      <h1>Ježíškova <em class="foil">dílna</em></h1>
+      <p class="eyebrow ruled" id="welcomeEyebrow">Online dárky</p>
+      <h1 id="welcomeTitle">Ježíškova <em class="foil">dílna</em></h1>
       <p class="login-note">Zabal online dárky s poukazy v PDF. Bez registrace a bez hesla: dílnu otevírá tvůj tajný odkaz.</p>
     </header>
 
@@ -105,10 +107,11 @@
     <a class="brand" href="dilna" aria-label="Ježíškova dílna">
       <span class="monogram small" aria-hidden="true"></span>
       <span class="brand-text">
-        <span class="brand-name">Ježíškova <em>dílna</em></span>
+        <span class="brand-name" id="brandName">Ježíškova <em>dílna</em></span>
         <span class="brand-sub" id="brandSub">Vánoční dárky · správa</span>
       </span>
     </a>
+    <div class="theme-switch" id="themeSwitch" role="radiogroup" aria-label="Příležitost"></div>
     <div class="top-actions">
       <button class="btn gold small" type="button" id="newGift">
         <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
@@ -125,12 +128,12 @@
     <!-- shelf: list of boxes -->
     <aside class="shelf" aria-label="Dárkové boxy">
       <div class="shelf-head">
-        <p class="eyebrow">Pod stromečkem</p>
+        <p class="eyebrow" id="shelfEyebrow">Pod stromečkem</p>
         <span class="shelf-count" id="shelfCount"></span>
       </div>
       <ul class="gift-list" id="giftList"></ul>
       <div class="shelf-empty" id="shelfEmpty" hidden>
-        <p>Pod stromečkem je zatím prázdno.</p>
+        <p id="shelfEmptyText">Pod stromečkem je zatím prázdno.</p>
         <button class="btn small" type="button" id="newGiftEmpty">Zabalit první dárek</button>
       </div>
     </aside>
@@ -154,6 +157,10 @@
               <input type="checkbox" id="fShowTitle">
               <span class="switch" aria-hidden="true"></span>
               <span>Příjemce uvidí název boxu</span>
+            </label>
+            <label class="occasion-pick">
+              <span class="label">Příležitost</span>
+              <select id="fTheme" class="input select-sm"></select>
             </label>
           </div>
           <span class="pill" id="statusPill"></span>
@@ -309,6 +316,27 @@
           <p class="when-status" id="whenStatus"></p>
         </section>
 
+        <!-- notifications + who looked -->
+        <section class="block" id="notifyBlock">
+          <header class="block-head">
+            <h3>Doručení a upozornění</h3>
+            <p>Uvidíš, jestli si obdarovaný dárek otevřel a rozbalil. Můžeš mu taky dát vědět.</p>
+          </header>
+          <div class="stats-line" id="statsLine"></div>
+          <div class="field">
+            <label for="fRecipientEmail" class="label">E-mail obdarovaného (nepovinný)</label>
+            <input id="fRecipientEmail" class="input" type="email" maxlength="200" placeholder="kata@example.cz" autocomplete="off">
+            <p class="hint" id="recipientHint">V čase odemčení mu pošleme e-mail s odkazem na dárek. Heslo v e-mailu nebude.</p>
+          </div>
+          <div class="ring-row">
+            <button type="button" class="ring-btn" id="ringBtn">
+              <span class="ring-icon" id="ringIcon" aria-hidden="true"></span>
+              <span id="ringLabel">Zazvonit zvonečkem</span>
+            </button>
+            <p class="hint" id="ringHint">Obdarovanému přijde e-mail a upozornění do prohlížeče. Pokud má dárek zrovna otevřený, zazvoní mu přímo na stránce.</p>
+          </div>
+        </section>
+
         <!-- message -->
         <section class="block">
           <header class="block-head">
@@ -399,6 +427,20 @@
         <button type="button" class="chip" id="acctSend" hidden>Poslat na e-mail</button>
         <button type="button" class="chip" id="acctRotate">Vyměnit za nový odkaz</button>
       </div>
+    </section>
+
+    <section class="acct-block" id="acctNotify">
+      <h3 class="acct-h">Upozornění pro tebe</h3>
+      <label class="toggle">
+        <input type="checkbox" id="aNotifyOpen">
+        <span class="switch" aria-hidden="true"></span>
+        <span>Napsat mi e-mail, když si někdo dárek rozbalí</span>
+      </label>
+      <p class="hint" id="aNotifyHint"></p>
+      <div class="chips">
+        <button type="button" class="chip" id="acctPush" hidden>Zapnout upozornění v tomto prohlížeči</button>
+      </div>
+      <p class="hint" id="acctPushHint" hidden></p>
     </section>
 
     <form class="acct-block" id="acctForm" novalidate>

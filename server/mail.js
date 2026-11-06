@@ -95,3 +95,69 @@ export function linkMessage(kind, { name, link }) {
 </table></td></tr></table></body></html>`;
   return { subject, text, html };
 }
+
+/* ---------- gift e-mails (same wording in php/api.php) ---------- */
+
+const GIFT_TEXT = {
+  christmas: {
+    unlocked: ["Ježíšek ti nadělil dárek", "Ježíšek ti nadělil dárek. Už je pod stromečkem a můžeš si ho rozbalit."],
+    ring: ["Cinkylink! Ježíšek zazvonil", "Ježíšek právě zazvonil zvonečkem. Dárek už je pod stromečkem."]
+  },
+  birthday: {
+    unlocked: ["Máš narozeninový dárek", "Narozeninový dárek je připravený a můžeš si ho rozbalit. Všechno nejlepší!"],
+    ring: ["Frrrk! Někdo na tebe troubí", "Někdo ti zatroubil na frkačku. Narozeninový dárek na tebe čeká."]
+  },
+  wedding: {
+    unlocked: ["Váš svatební dar je připravený", "Svatební dar je připravený k rozbalení. Hodně štěstí na společné cestě!"],
+    ring: ["Cink! Někdo si s vámi připíjí", "Někdo vám cinkl skleničkou. Svatební dar na vás čeká."]
+  },
+  general: {
+    unlocked: ["Máš dárek", "Někdo ti poslal dárek a teď už si ho můžeš rozbalit."],
+    ring: ["Ťuk ťuk! Dárek na tebe čeká", "Někdo ti zaťukal na dveře. Dárek na tebe čeká."]
+  }
+};
+
+function mailHtml({ eyebrow, heading, lead, button, link, foot }) {
+  return `<!doctype html><html lang="cs"><body style="margin:0;padding:0;background:#05140e">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#05140e;padding:32px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#0b241a;border:1px solid #d6b26a;font-family:Georgia,'Times New Roman',serif;color:#f3ead6">
+<tr><td style="padding:36px 32px 8px;text-align:center">
+<p style="margin:0;font:12px/1 Arial,sans-serif;letter-spacing:4px;text-transform:uppercase;color:#d6b26a">${escHtml(eyebrow)}</p>
+<h1 style="margin:14px 0 0;font-weight:normal;font-style:italic;font-size:30px;line-height:1.15;color:#f6e3ad">${escHtml(heading)}</h1>
+</td></tr>
+<tr><td style="padding:18px 32px 0;font:16px/1.55 Arial,sans-serif;color:#e8e0cc;text-align:center">${escHtml(lead)}</td></tr>
+<tr><td align="center" style="padding:24px 32px">
+<a href="${escHtml(link)}" style="display:inline-block;padding:15px 26px;background:#d6b26a;color:#2a1a10;font:bold 13px/1 Arial,sans-serif;letter-spacing:3px;text-transform:uppercase;text-decoration:none;border-radius:3px">${escHtml(button)}</a>
+</td></tr>
+<tr><td style="padding:0 32px 32px;font:13px/1.55 Arial,sans-serif;color:#b7b29a;text-align:center">${escHtml(foot)}</td></tr>
+</table></td></tr></table></body></html>`;
+}
+
+/**
+ * kind "unlocked" | "ring": to the recipient, link = the box
+ * kind "opened": to the creator, link = the workshop (never the secret key)
+ */
+export function giftMessage(kind, theme, { title, link, hasPassword }) {
+  if (kind === "opened") {
+    const subject = `Dárek „${title}“ je rozbalený`;
+    const lead = `Obdarovaný si právě rozbalil tvůj dárek „${title}“. V dílně uvidíš, kdy dárek otevřel a rozbalil.`;
+    const foot = "Tohle upozornění vypneš v dílně v okně Moje dílna.";
+    return { subject, text: `Ahoj,\n\n${lead}\n\n${link}\n\n${foot}\n`, html: mailHtml({ eyebrow: "Dárek je rozbalený", heading: title, lead, button: "Otevřít dílnu", link, foot }) };
+  }
+  const t = (GIFT_TEXT[theme] || GIFT_TEXT.christmas)[kind === "ring" ? "ring" : "unlocked"];
+  const subject = title ? `${t[0]}: ${title}` : t[0];
+  const foot = hasPassword ? "Dárek je zamčený heslem. Prozradí ti ho ten, kdo ho balil." : "Stačí kliknout na tlačítko.";
+  return {
+    subject,
+    text: `Ahoj,\n\n${t[1]}\n\n${link}\n\n${foot}\n`,
+    html: mailHtml({ eyebrow: t[0], heading: title || "Dárek pro tebe", lead: t[1], button: "Rozbalit dárek", link, foot })
+  };
+}
+
+/** Short texts for system notifications (the service worker shows them) */
+export const PUSH_TEXT = {
+  unlocked: (theme, title) => ({ title: (GIFT_TEXT[theme] || GIFT_TEXT.christmas).unlocked[0], body: title ? `„${title}“ už jde rozbalit.` : "Dárek už jde rozbalit." }),
+  ring: (theme, title) => ({ title: (GIFT_TEXT[theme] || GIFT_TEXT.christmas).ring[0], body: title ? `„${title}“ na tebe čeká.` : "Dárek na tebe čeká." }),
+  viewed: (_, title) => ({ title: "Dárek si někdo otevřel", body: `Odkaz na „${title}“ se právě poprvé otevřel.` }),
+  opened: (_, title) => ({ title: "Dárek je rozbalený 🎁", body: `„${title}“ si obdarovaný právě rozbalil.` })
+};

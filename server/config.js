@@ -4,6 +4,7 @@ import { fsStorage } from "./storage/fs.js";
 import { vercelStorage } from "./storage/vercel.js";
 import { redisFromEnv, blobTokenFromEnv } from "./storage/env-detect.js";
 import { mailConfigFromEnv, createMailer } from "./mail.js";
+import { pushConfigFromEnv, createPusher } from "./push.js";
 
 let app;
 
@@ -42,7 +43,9 @@ export function getApp() {
     maxGifts: Number(env.MAX_GIFTS || 50),
     maxStorageBytes: Number(env.MAX_STORAGE_MB || 100) * 1024 * 1024,
     signupCode: (env.SIGNUP_CODE || "").trim(),
-    mailer: createMailer(mailConfigFromEnv(env))
+    mailer: createMailer(mailConfigFromEnv(env)),
+    pusher: createPusher(pushConfigFromEnv(env)),
+    cronSecret: (env.CRON_SECRET || "").trim()
   });
   return app;
 }
