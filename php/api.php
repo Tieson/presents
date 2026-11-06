@@ -123,28 +123,57 @@ function default_open_at(): string {
     return iso(gmmktime(17, 0, 0, 12, 24, $y)); // 24.12. 18:00 Prague (CET)
 }
 /* appearance & reveal – whitelists shared with web/assets/wrap.js */
-const PAPERS = ['burgundy', 'emerald', 'midnight', 'ivory', 'champagne', 'blush', 'charcoal', 'silver'];
-const PATTERNS = ['plain', 'stripes', 'dots', 'stars', 'snow', 'tartan'];
-const RIBBONS = ['gold', 'silver', 'red', 'green', 'white', 'black'];
-const RIBBON_STYLES = ['cross', 'single'];
+const PAPERS = ['burgundy', 'scarlet', 'emerald', 'fir', 'midnight', 'plum', 'charcoal', 'ivory', 'frost', 'champagne', 'gold', 'blush', 'silver', 'kraft'];
+const PATTERNS = ['plain', 'stripes', 'dots', 'tartan', 'stars', 'snow', 'trees', 'baubles', 'holly', 'candy', 'gingerbread', 'deer', 'hearts'];
+const INKS = ['white', 'cream', 'gold', 'silver', 'bronze', 'red', 'green', 'navy', 'brown', 'black'];
+const RIBBONS = ['gold', 'silver', 'copper', 'red', 'burgundy', 'pink', 'green', 'navy', 'white', 'black'];
+const RIBBON_STYLES = ['cross', 'single', 'none'];
+const BOWS = ['classic', 'double', 'rosette', 'small', 'none'];
+const DECOS = ['none', 'holly', 'pine', 'candy', 'bauble', 'star', 'bells', 'orange'];
+const PHOTO_FRAMES = ['polaroid', 'postcard'];
 const REVEALS = ['all', 'sequential', 'choice'];
+const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+/** Content type from the first bytes (never trust the browser's word) */
+function sniff_type(string $buf): ?string {
+    if (substr($buf, 0, 5) === '%PDF-') return 'application/pdf';
+    if (substr($buf, 0, 3) === "\xFF\xD8\xFF") return 'image/jpeg';
+    if (substr($buf, 0, 8) === "\x89PNG\r\n\x1A\n") return 'image/png';
+    if (substr($buf, 0, 4) === 'RIFF' && substr($buf, 8, 4) === 'WEBP') return 'image/webp';
+    return null;
+}
+function file_type(?array $m): string { return (string) ($m['type'] ?? 'application/pdf'); }
 
 function sanitize_appearance($a): array {
     $a = is_array($a) ? $a : [];
     $pick = function (array $list, $v, string $d) { return in_array($v, $list, true) ? $v : $d; };
     $seal = isset($a['seal']) && is_string($a['seal']) ? mb_substr(trim($a['seal']), 0, 2, 'UTF-8') : 'V';
+    $op = $a['patternOpacity'] ?? null;
+    $op = (is_int($op) || is_float($op) || (is_string($op) && is_numeric($op))) ? (int) max(5, min(90, round((float) $op))) : null;
     return [
         'paper' => $pick(PAPERS, $a['paper'] ?? null, 'burgundy'),
         'pattern' => $pick(PATTERNS, $a['pattern'] ?? null, 'stripes'),
+        'patternColor' => in_array($a['patternColor'] ?? null, INKS, true) ? $a['patternColor'] : null,
+        'patternOpacity' => $op,
         'ribbon' => $pick(RIBBONS, $a['ribbon'] ?? null, 'gold'),
         'ribbonStyle' => $pick(RIBBON_STYLES, $a['ribbonStyle'] ?? null, 'cross'),
+        'bow' => $pick(BOWS, $a['bow'] ?? null, 'classic'),
+        'deco' => $pick(DECOS, $a['deco'] ?? null, 'none'),
         'seal' => $seal,
     ];
+}
+/** every uploaded file a box references: vouchers + its photo */
+function files_of(array $g): array {
+    $out = [];
+    foreach ($g['items'] as $i) if (!empty($i['file'])) $out[] = $i['file'];
+    if (!empty($g['photo']['file'])) $out[] = $g['photo']['file'];
+    return $out;
 }
 function with_defaults(?array $g): ?array {
     if (!$g) return $g;
     $g['appearance'] = sanitize_appearance($g['appearance'] ?? null);
     $g['reveal'] = in_array($g['reveal'] ?? null, REVEALS, true) ? $g['reveal'] : 'all';
+    $g['photo'] = $g['photo'] ?? null;
     return $g;
 }
 
@@ -243,7 +272,7 @@ function summary(array $g): array {
         'hasPassword' => !empty($g['passwordHash']), 'anytime' => (bool) $g['anytime'], 'openAt' => $g['openAt'],
         'manualUnlock' => (bool) $g['manualUnlock'], 'locked' => is_locked($g),
         'appearance' => $g['appearance'], 'reveal' => $g['reveal'],
-        'itemCount' => count($g['items']), 'fileCount' => $files,
+        'itemCount' => count($g['items']), 'fileCount' => $files, 'hasPhoto' => !empty($g['photo']),
         'createdAt' => $g['createdAt'], 'updatedAt' => $g['updatedAt'],
     ];
 }
@@ -261,10 +290,28 @@ function public_gift(array $g): array {
                 'file' => $i['file'] ? ['name' => $i['file']['name'], 'size' => $i['file']['size']] : null,
             ];
         }, $g['items']),
+        // the image itself comes from gifts/<code>/photo?t=<token>
+        'photo' => !empty($g['photo']) ? [
+            'caption' => $g['photo']['caption'], 'frame' => $g['photo']['frame'],
+            'w' => $g['photo']['file']['w'] ?? null, 'h' => $g['photo']['file']['h'] ?? null,
+        ] : null,
     ];
 }
 function gift_scope(array $g): string {
     return 'gift|' . $g['code'] . '|' . (!empty($g['passwordHash']) ? substr($g['passwordHash'], -16) : 'none');
+}
+function send_image(array $m): void {
+    global $FILES;
+    $path = "$FILES/{$m['id']}.pdf";       // every upload keeps the .pdf name, `type` says what it is
+    if (!safe_name($m['id']) || !is_file($path) || !in_array(file_type($m), IMAGE_TYPES, true)) fail(404, 'not_found', 'Fotka nenalezena.');
+    header('Content-Type: ' . file_type($m));
+    header('Content-Length: ' . filesize($path));
+    header('Content-Disposition: inline');
+    header('Cache-Control: private, no-store');
+    header('X-Content-Type-Options: nosniff');
+    header("Content-Security-Policy: default-src 'none'; sandbox");
+    readfile($path);
+    exit;
 }
 function send_pdf(string $id, string $name, bool $download): void {
     global $FILES;
@@ -524,14 +571,31 @@ function unique_code(): string {
     for ($i = 0; $i < 20; $i++) { $c = generate_code(); if (!get_gift($c)) return $c; }
     throw new RuntimeException('code');
 }
+/** before/after: lists of files ({ id, size }) still referenced by a box */
 function remove_orphan_files(string $owner, array $before, array $after): void {
     $keep = [];
-    foreach ($after as $i) if (!empty($i['file'])) $keep[$i['file']['id']] = true;
+    foreach ($after as $f) $keep[$f['id']] = true;
     $freed = 0;
-    foreach ($before as $i) {
-        if (!empty($i['file']) && !isset($keep[$i['file']['id']])) { delete_file((string) $i['file']['id']); $freed += (int) ($i['file']['size'] ?? 0); }
+    foreach ($before as $f) {
+        if (!isset($keep[$f['id']])) { delete_file((string) $f['id']); $freed += (int) ($f['size'] ?? 0); }
     }
     if ($freed) adjust_usage($owner, -$freed);
+}
+/** The box photo: an image this workshop uploaded, a short caption and a frame */
+function sanitize_photo($raw, ?array $prev, string $owner): ?array {
+    if (!is_array($raw) || empty($raw['file']['id'])) return null;
+    $fid = (string) $raw['file']['id'];
+    $file = ($prev['file']['id'] ?? null) === $fid ? $prev['file'] : null;
+    if (!$file) {
+        $m = file_meta($fid);
+        if (!$m || ($m['owner'] ?? null) !== $owner || !in_array(file_type($m), IMAGE_TYPES, true)) return null;
+        $file = ['id' => $m['id'], 'name' => $m['name'], 'size' => $m['size'], 'type' => $m['type'], 'w' => $m['w'] ?? null, 'h' => $m['h'] ?? null];
+    }
+    return [
+        'file' => $file,
+        'caption' => trim((string) preg_replace('/\s+/u', ' ', s($raw['caption'] ?? '', 200))),
+        'frame' => in_array($raw['frame'] ?? null, PHOTO_FRAMES, true) ? $raw['frame'] : 'polaroid',
+    ];
 }
 
 /* ---------- request ---------- */
@@ -585,6 +649,15 @@ try {
                 if (is_locked($g)) fail(423, 'locked', 'Dárek ještě nejde rozbalit.', ['openAt' => $g['openAt'], 'serverNow' => now_iso()]);
             }
             send_json(['gift' => public_gift($g), 'token' => sign_token($SECRET, gift_scope($g), GIFT_TTL), 'preview' => $preview]);
+        }
+        if (count($seg) === 3 && $seg[2] === 'photo' && $method === 'GET') {
+            if (!$isOwner()) {
+                if (!check_token($SECRET, gift_scope($g), $_GET['t'] ?? null)) fail(401, 'bad_token', 'Platnost odkazu vypršela. Otevři dárek znovu.');
+                if (is_locked($g)) fail(423, 'locked', 'Dárek ještě nejde rozbalit.');
+            }
+            $m = !empty($g['photo']['file']['id']) ? file_meta($g['photo']['file']['id']) : null;
+            if (!$m) fail(404, 'not_found', 'Fotka nenalezena.');
+            send_image($m);
         }
         if (count($seg) === 5 && $seg[2] === 'items' && $seg[4] === 'file' && $method === 'GET') {
             if (!$isOwner()) {
@@ -706,21 +779,29 @@ try {
                 $buf = (string) file_get_contents('php://input');
                 if (strlen($buf) > $MAX_UPLOAD) fail(413, 'too_large', "Soubor je větší než $mb MB.");
                 if ($buf === '') fail(413, 'too_large', "Soubor se nepodařilo přijmout. Zkontroluj post_max_size v PHP (limit aplikace je $mb MB).");
-                if (substr($buf, 0, 5) !== '%PDF-') fail(415, 'not_pdf', 'Nahrát jde jen PDF soubor.');
+                $type = sniff_type($buf);
+                if (!$type) fail(415, 'bad_type', 'Nahrát jde PDF poukaz nebo fotka (JPEG, PNG, WebP).');
                 if ((int) ($w['usedBytes'] ?? 0) + strlen($buf) > $MAX_STORAGE) {
-                    fail(413, 'quota', 'Dílna má místo na ' . $MB($MAX_STORAGE) . ' MB PDF a je plná. Smaž nepotřebné poukazy.');
+                    fail(413, 'quota', 'Dílna má místo na ' . $MB($MAX_STORAGE) . ' MB souborů a je plná. Smaž nepotřebné poukazy nebo fotky.');
                 }
-                $name = rawurldecode((string) ($_SERVER['HTTP_X_FILE_NAME'] ?? 'poukaz.pdf'));
-                $name = mb_substr((string) preg_replace('#[\\\\/\r\n]#', '_', $name), 0, 120, 'UTF-8') ?: 'poukaz.pdf';
-                $meta = ['id' => random_id(12), 'owner' => $w['id'], 'name' => $name, 'size' => strlen($buf), 'createdAt' => now_iso()];
+                $fallback = $type === 'application/pdf' ? 'poukaz.pdf' : 'fotka';
+                $name = rawurldecode((string) ($_SERVER['HTTP_X_FILE_NAME'] ?? $fallback));
+                $name = mb_substr((string) preg_replace('#[\\\\/\r\n]#', '_', $name), 0, 120, 'UTF-8') ?: $fallback;
+                $meta = ['id' => random_id(12), 'owner' => $w['id'], 'name' => $name, 'size' => strlen($buf), 'type' => $type, 'createdAt' => now_iso()];
+                if ($type !== 'application/pdf') {
+                    $dim = function ($v) { $n = (int) round((float) $v); return $n > 0 && $n < 20000 ? $n : null; };
+                    $meta['w'] = $dim($_SERVER['HTTP_X_IMAGE_WIDTH'] ?? 0);
+                    $meta['h'] = $dim($_SERVER['HTTP_X_IMAGE_HEIGHT'] ?? 0);
+                }
                 file_put_contents("$FILES/{$meta['id']}.pdf", $buf);
                 write_atomic("$FILES/{$meta['id']}.json", json_encode($meta, JSON_UNESCAPED_UNICODE));
                 adjust_usage($w['id'], strlen($buf));
-                send_json(['id' => $meta['id'], 'name' => $meta['name'], 'size' => $meta['size']], 201);
+                send_json(['id' => $meta['id'], 'name' => $meta['name'], 'size' => $meta['size'], 'type' => $type, 'w' => $meta['w'] ?? null, 'h' => $meta['h'] ?? null], 201);
             }
             if (count($seg) === 3 && $method === 'GET') {
                 $m = file_meta($seg[2]);
                 if (!$m || ($m['owner'] ?? null) !== $w['id']) fail(404, 'not_found', 'Soubor nenalezen.');
+                if (file_type($m) !== 'application/pdf') send_image($m);
                 send_pdf($m['id'], $m['name'], false);
             }
         }
@@ -743,7 +824,7 @@ try {
                     'manualUnlock' => false,
                     'appearance' => sanitize_appearance($b['appearance'] ?? null),
                     'reveal' => in_array($b['reveal'] ?? null, REVEALS, true) ? $b['reveal'] : 'all',
-                    'items' => [], 'createdAt' => $now, 'updatedAt' => $now,
+                    'items' => [], 'photo' => null, 'createdAt' => $now, 'updatedAt' => $now,
                 ];
                 put_gift($g);
                 send_json(admin_view($g), 201);
@@ -766,7 +847,7 @@ try {
                     $fid = $raw['file']['id'] ?? null;
                     if ($fid) {
                         if (isset($prevFiles[$fid])) $file = $prevFiles[$fid];
-                        elseif (($m = file_meta((string) $fid)) && ($m['owner'] ?? null) === $w['id']) $file = ['id' => $m['id'], 'name' => $m['name'], 'size' => $m['size']];
+                        elseif (($m = file_meta((string) $fid)) && ($m['owner'] ?? null) === $w['id'] && file_type($m) === 'application/pdf') $file = ['id' => $m['id'], 'name' => $m['name'], 'size' => $m['size']];
                     }
                     $id = (string) ($raw['id'] ?? '');
                     $items[] = [
@@ -789,6 +870,7 @@ try {
                     'appearance' => array_key_exists('appearance', $b) ? sanitize_appearance($b['appearance']) : $g['appearance'],
                     'reveal' => in_array($b['reveal'] ?? null, REVEALS, true) ? $b['reveal'] : $g['reveal'],
                     'items' => $items,
+                    'photo' => array_key_exists('photo', $b) ? sanitize_photo($b['photo'], $g['photo'], $w['id']) : $g['photo'],
                     'updatedAt' => now_iso(),
                 ]);
                 if (array_key_exists('password', $b)) {
@@ -800,13 +882,13 @@ try {
                     }
                 }
                 put_gift($next);
-                remove_orphan_files($w['id'], $g['items'], $items);
+                remove_orphan_files($w['id'], files_of($g), files_of($next));
                 send_json(admin_view($next));
             }
 
             if (count($seg) === 3 && $method === 'DELETE') {
                 delete_gift($g['code']);
-                remove_orphan_files($w['id'], $g['items'], []);
+                remove_orphan_files($w['id'], files_of($g), []);
                 send_json(['ok' => true]);
             }
 

@@ -46,31 +46,60 @@ export function defaultOpenAt(now = new Date()) {
 }
 
 /* ---------- appearance & reveal (whitelists shared with web/assets/wrap.js) ---------- */
-export const PAPERS = ["burgundy", "emerald", "midnight", "ivory", "champagne", "blush", "charcoal", "silver"];
-export const PATTERNS = ["plain", "stripes", "dots", "stars", "snow", "tartan"];
-export const RIBBONS = ["gold", "silver", "red", "green", "white", "black"];
-export const RIBBON_STYLES = ["cross", "single"];
+export const PAPERS = ["burgundy", "scarlet", "emerald", "fir", "midnight", "plum", "charcoal", "ivory", "frost", "champagne", "gold", "blush", "silver", "kraft"];
+export const PATTERNS = ["plain", "stripes", "dots", "tartan", "stars", "snow", "trees", "baubles", "holly", "candy", "gingerbread", "deer", "hearts"];
+export const INKS = ["white", "cream", "gold", "silver", "bronze", "red", "green", "navy", "brown", "black"];
+export const RIBBONS = ["gold", "silver", "copper", "red", "burgundy", "pink", "green", "navy", "white", "black"];
+export const RIBBON_STYLES = ["cross", "single", "none"];
+export const BOWS = ["classic", "double", "rosette", "small", "none"];
+export const DECOS = ["none", "holly", "pine", "candy", "bauble", "star", "bells", "orange"];
+export const PHOTO_FRAMES = ["polaroid", "postcard"];
 export const REVEALS = ["all", "sequential", "choice"];
-export const DEFAULT_APPEARANCE = { paper: "burgundy", pattern: "stripes", ribbon: "gold", ribbonStyle: "cross", seal: "V" };
+export const DEFAULT_APPEARANCE = {
+  paper: "burgundy", pattern: "stripes", patternColor: null, patternOpacity: null,
+  ribbon: "gold", ribbonStyle: "cross", bow: "classic", deco: "none", seal: "V"
+};
 
 export function sanitizeAppearance(a) {
   const src = a && typeof a === "object" ? a : {};
   const pick = (list, v, d) => (list.includes(v) ? v : d);
   const seal = typeof src.seal === "string" ? [...src.seal.trim()].slice(0, 2).join("") : DEFAULT_APPEARANCE.seal;
+  const op = Number(src.patternOpacity);
   return {
     paper: pick(PAPERS, src.paper, DEFAULT_APPEARANCE.paper),
     pattern: pick(PATTERNS, src.pattern, DEFAULT_APPEARANCE.pattern),
+    patternColor: pick(INKS, src.patternColor, null),                      // null = the paper's default
+    patternOpacity: src.patternOpacity == null || src.patternOpacity === "" || !Number.isFinite(op)
+      ? null : Math.min(90, Math.max(5, Math.round(op))),                  // %, null = the paper's default
     ribbon: pick(RIBBONS, src.ribbon, DEFAULT_APPEARANCE.ribbon),
     ribbonStyle: pick(RIBBON_STYLES, src.ribbonStyle, DEFAULT_APPEARANCE.ribbonStyle),
+    bow: pick(BOWS, src.bow, DEFAULT_APPEARANCE.bow),
+    deco: pick(DECOS, src.deco, DEFAULT_APPEARANCE.deco),
     seal
   };
 }
 
+/* ---------- uploads: PDF vouchers and one photo per box ---------- */
+export const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+/** Content type from the first bytes (never trust the browser's word) */
+export function sniffType(buf) {
+  const head = buf.subarray(0, 12);
+  if (head.subarray(0, 5).toString("latin1") === "%PDF-") return "application/pdf";
+  if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return "image/jpeg";
+  if (head.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
+  if (head.subarray(0, 4).toString("latin1") === "RIFF" && head.subarray(8, 12).toString("latin1") === "WEBP") return "image/webp";
+  return null;
+}
+const fileType = meta => meta?.type || "application/pdf";               // files from before photos were PDFs
+const isPdf = meta => fileType(meta) === "application/pdf";
+const isImage = meta => IMAGE_TYPES.includes(fileType(meta));
+
 /** Boxes saved before these options existed get the defaults */
 function withDefaults(g) {
   if (!g) return g;
-  return { ...g, appearance: sanitizeAppearance(g.appearance), reveal: REVEALS.includes(g.reveal) ? g.reveal : "all" };
+  return { ...g, appearance: sanitizeAppearance(g.appearance), reveal: REVEALS.includes(g.reveal) ? g.reveal : "all", photo: g.photo || null };
 }
+const filesOf = g => [...g.items.filter(i => i.file).map(i => i.file), ...(g.photo?.file ? [g.photo.file] : [])];
 
 export function isLocked(g, now = Date.now()) {
   if (g.manualUnlock || g.anytime) return false;
@@ -88,7 +117,7 @@ function summary(g) {
     code: g.code, title: g.title, showTitle: g.showTitle, hasPassword: !!g.passwordHash,
     anytime: g.anytime, openAt: g.openAt, manualUnlock: g.manualUnlock, locked: isLocked(g),
     appearance: g.appearance, reveal: g.reveal,
-    itemCount: g.items.length, fileCount: g.items.filter(i => i.file).length,
+    itemCount: g.items.length, fileCount: g.items.filter(i => i.file).length, hasPhoto: !!g.photo,
     createdAt: g.createdAt, updatedAt: g.updatedAt
   };
 }
@@ -104,7 +133,9 @@ function publicGift(g) {
     items: g.items.map(i => ({
       id: i.id, name: i.name, description: i.description,
       file: i.file ? { name: i.file.name, size: i.file.size } : null
-    }))
+    })),
+    // the image itself comes from gifts/<code>/photo?t=<token>
+    photo: g.photo ? { caption: g.photo.caption, frame: g.photo.frame, w: g.photo.file.w || null, h: g.photo.file.h || null } : null
   };
 }
 
@@ -114,6 +145,18 @@ function contentDisposition(name, download) {
   const safe = String(name || "poukaz.pdf").replace(/[\r\n"]/g, "");
   const ascii = safe.normalize("NFD").replace(/[^\x20-\x7e]/g, "");
   return `${download ? "attachment" : "inline"}; filename="${ascii || "poukaz.pdf"}"; filename*=UTF-8''${encodeURIComponent(safe)}`;
+}
+
+function imageResponse(file, meta) {
+  return new Response(file, {
+    headers: {
+      "content-type": fileType(meta),
+      "content-disposition": "inline",
+      "cache-control": "private, no-store",
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "default-src 'none'; sandbox"
+    }
+  });
 }
 
 function pdfResponse(file, meta, download) {
@@ -253,7 +296,7 @@ export function createApp({
         file = prevFiles.get(fid) || null;
         if (!file) {
           const meta = await storage.getFileMeta(fid);
-          if (meta && meta.owner === owner) file = { id: meta.id, name: meta.name, size: meta.size };
+          if (meta && meta.owner === owner && isPdf(meta)) file = { id: meta.id, name: meta.name, size: meta.size };
         }
       }
       items.push({
@@ -266,12 +309,29 @@ export function createApp({
     return items;
   }
 
+  /** The box photo: an image this workshop uploaded, a short caption and a frame */
+  async function sanitizePhoto(raw, previous, owner) {
+    if (!raw || typeof raw !== "object" || !raw.file?.id) return null;
+    let file = previous?.file?.id === raw.file.id ? previous.file : null;
+    if (!file) {
+      const meta = await storage.getFileMeta(String(raw.file.id));
+      if (!meta || meta.owner !== owner || !isImage(meta)) return null;
+      file = { id: meta.id, name: meta.name, size: meta.size, type: meta.type, w: meta.w || null, h: meta.h || null };
+    }
+    return {
+      file,
+      caption: str(raw.caption, 200).replace(/\s+/g, " ").trim(),
+      frame: PHOTO_FRAMES.includes(raw.frame) ? raw.frame : "polaroid"
+    };
+  }
+
+  /** before/after: lists of { id, size } still referenced by a box */
   async function removeOrphanFiles(w, before, after) {
-    const keep = new Set(after.filter(i => i.file).map(i => i.file.id));
+    const keep = new Set(after.map(f => f.id));
     let freed = 0;
-    for (const i of before) {
-      if (i.file && !keep.has(i.file.id)) {
-        try { await storage.deleteFile(i.file.id); freed += i.file.size || 0; } catch { /* ignore */ }
+    for (const f of before) {
+      if (!keep.has(f.id)) {
+        try { await storage.deleteFile(f.id); freed += f.size || 0; } catch { /* ignore */ }
       }
     }
     if (freed) await adjustUsage(w, -freed);
@@ -321,6 +381,19 @@ export function createApp({
           }
         }
         return json({ gift: publicGift(g), token: signToken(SECRET, giftScope(g), GIFT_TTL), preview });
+      }
+
+      if (seg.length === 3 && seg[2] === "photo" && method === "GET") {
+        if (!(await isOwner())) {
+          if (!checkToken(SECRET, giftScope(g), new URL(req.url).searchParams.get("t"))) {
+            return fail(401, "bad_token", "Platnost odkazu vypršela. Otevři dárek znovu.");
+          }
+          if (isLocked(g)) return fail(423, "locked", "Dárek ještě nejde rozbalit.");
+        }
+        if (!g.photo?.file) return fail(404, "not_found", "Fotka nenalezena.");
+        const file = await storage.readFile(g.photo.file.id);
+        if (!file) return fail(404, "not_found", "Fotka nenalezena.");
+        return imageResponse(file.body, file.meta);
       }
 
       if (seg.length === 5 && seg[2] === "items" && seg[4] === "file" && method === "GET") {
@@ -446,23 +519,27 @@ export function createApp({
           if (len > maxUploadBytes) return tooBig();
           const buf = Buffer.from(await req.arrayBuffer());
           if (buf.length > maxUploadBytes) return tooBig();
-          if (buf.subarray(0, 5).toString("latin1") !== "%PDF-") return fail(415, "not_pdf", "Nahrát jde jen PDF soubor.");
+          const type = sniffType(buf);
+          if (!type) return fail(415, "bad_type", "Nahrát jde PDF poukaz nebo fotka (JPEG, PNG, WebP).");
           const fresh = await storage.getWorkshop(w.id);
           if ((fresh.usedBytes || 0) + buf.length > maxStorageBytes) {
-            return fail(413, "quota", `Dílna má místo na ${MB(maxStorageBytes)} MB PDF a je plná. Smaž nepotřebné poukazy.`);
+            return fail(413, "quota", `Dílna má místo na ${MB(maxStorageBytes)} MB souborů a je plná. Smaž nepotřebné poukazy nebo fotky.`);
           }
-          let name = "poukaz.pdf";
+          const fallback = type === "application/pdf" ? "poukaz.pdf" : "fotka";
+          let name = fallback;
           try { name = decodeURIComponent(req.headers.get("x-file-name") || name); } catch { /* keep default */ }
-          name = name.replace(/[\\/\r\n]/g, "_").slice(0, 120) || "poukaz.pdf";
-          const meta = { id: randomId(12), owner: w.id, name, size: buf.length, createdAt: new Date().toISOString() };
+          name = name.replace(/[\\/\r\n]/g, "_").slice(0, 120) || fallback;
+          const dim = v => { const n = Math.round(Number(v)); return n > 0 && n < 20000 ? n : null; };
+          const meta = { id: randomId(12), owner: w.id, name, size: buf.length, type, createdAt: new Date().toISOString() };
+          if (type !== "application/pdf") { meta.w = dim(req.headers.get("x-image-width")); meta.h = dim(req.headers.get("x-image-height")); }
           await storage.saveFile(meta, buf);
           await adjustUsage(w, buf.length);
-          return json({ id: meta.id, name: meta.name, size: meta.size }, 201);
+          return json({ id: meta.id, name: meta.name, size: meta.size, type, w: meta.w ?? null, h: meta.h ?? null }, 201);
         }
         if (seg.length === 3 && method === "GET") {
           const file = await storage.readFile(seg[2]);
           if (!file || file.meta.owner !== w.id) return fail(404, "not_found", "Soubor nenalezen.");
-          return pdfResponse(file.body, file.meta, false);
+          return isImage(file.meta) ? imageResponse(file.body, file.meta) : pdfResponse(file.body, file.meta, false);
         }
       }
 
@@ -492,6 +569,7 @@ export function createApp({
             appearance: sanitizeAppearance(body.appearance),
             reveal: REVEALS.includes(body.reveal) ? body.reveal : "all",
             items: [],
+            photo: null,
             createdAt: now,
             updatedAt: now
           };
@@ -509,6 +587,7 @@ export function createApp({
         if (seg.length === 3 && method === "PUT") {
           const b = await readJson(req);
           const items = await sanitizeItems(b.items, g.items, w.id);
+          const photo = b.photo === undefined ? g.photo : await sanitizePhoto(b.photo, g.photo, w.id);
           const next = {
             ...g,
             title: str(b.title, 120).trim() || g.title,
@@ -521,6 +600,7 @@ export function createApp({
             appearance: b.appearance === undefined ? g.appearance : sanitizeAppearance(b.appearance),
             reveal: REVEALS.includes(b.reveal) ? b.reveal : g.reveal,
             items,
+            photo,
             updatedAt: new Date().toISOString()
           };
           if (b.password === null) next.passwordHash = null;
@@ -530,13 +610,13 @@ export function createApp({
             next.passwordHash = hashPassword(pw);
           }
           await storage.putGift(next);
-          await removeOrphanFiles(w, g.items, items);
+          await removeOrphanFiles(w, filesOf(g), filesOf(next));
           return json(adminView(next));
         }
 
         if (seg.length === 3 && method === "DELETE") {
           await storage.deleteGift(g.code);
-          await removeOrphanFiles(w, g.items, []);
+          await removeOrphanFiles(w, filesOf(g), []);
           return json({ ok: true });
         }
 

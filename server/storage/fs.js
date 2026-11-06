@@ -7,7 +7,8 @@ import path from "node:path";
  *   data/keys/<sha256>.json      { id } – finds a workshop by the hash of its secret key
  *   data/emails/<sha256>.json    { ids } – workshops saved with an e-mail address (lost-link e-mails)
  *   data/gifts/<code>.json       box (has `owner` = workshop id)
- *   data/files/<id>.pdf + .json  uploaded PDF + meta (has `owner`)
+ *   data/files/<id>.pdf + .json  uploaded file + meta (has `owner`; `type` says PDF or image,
+ *                                the .pdf name is kept for every file so older data still works)
  */
 export function fsStorage(dataDir) {
   const dirs = {

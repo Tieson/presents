@@ -10,6 +10,7 @@ Chyby mají tvar `{ "error": "kod_chyby", "message": "lidsky čitelný text" }`.
 | GET | `gifts/{code}` | Obálka dárku: `{ code, title, hasPassword, locked, openAt, serverNow }`. `title` je `null`, pokud ho tvůrce skryl. |
 | POST | `gifts/{code}/open` | Tělo `{ password }` nebo `{ token }` (dříve vydaný token, aby příjemce nemusel heslo psát znovu). Vrací `{ gift, token }`. `401 bad_password`, `423 locked` (+ `openAt`, `serverNow`), `404 not_found`. Přihlášená dílna, které box patří, obejde s `{ preview: true }` zámek i heslo. |
 | GET | `gifts/{code}/items/{itemId}/file?t={token}[&dl=1]` | PDF položky. Server znovu ověří token i časový zámek. |
+| GET | `gifts/{code}/photo?t={token}` | Fotka boxu (JPEG/PNG/WebP). Stejná kontrola tokenu a zámku. V `open` je jen `gift.photo = { caption, frame, w, h }`, id souboru se nezveřejňuje. |
 
 `gift` = `{ code, title, message, signature, items: [{ id, name, description, file: { name, size } | null }] }`
 
@@ -45,8 +46,8 @@ Vyžadují přihlášenou dílnu. Cizí box nebo PDF vrací `404`, jako by neexi
 | PUT | `admin/gifts/{code}` | uloží box. `password`: řetězec = nastavit nové, `null` = bez hesla, vynecháno = beze změny. Připojit jde jen PDF vlastní dílny. |
 | DELETE | `admin/gifts/{code}` | smaže box i jeho PDF |
 | POST | `admin/gifts/{code}/regenerate-code` | nový kód (adresa), vrátí box |
-| POST | `admin/files` | tělo = surové PDF (`application/octet-stream`), hlavička `X-File-Name` (URL-encoded). Vrátí `{ id, name, size }`. `413 too_large` / `413 quota` |
-| GET | `admin/files/{id}` | náhled PDF pro dílnu |
+| POST | `admin/files` | tělo = surové PDF nebo obrázek (`application/octet-stream`), hlavička `X-File-Name` (URL-encoded), u obrázku volitelně `X-Image-Width` / `X-Image-Height`. Typ server pozná z prvních bajtů (PDF, JPEG, PNG, WebP; nic jiného, ani SVG). Vrátí `{ id, name, size, type, w, h }`. `415 bad_type`, `413 too_large` / `413 quota` |
+| GET | `admin/files/{id}` | náhled PDF nebo fotky pro dílnu |
 
 ## Uložená dílna
 
@@ -82,14 +83,23 @@ Přihlašovací cookie = `<id>.<exp>.<HMAC(APP_SECRET, "ws|id|keyHash[0..16]|exp
   "anytime": false,
   "openAt": "2026-12-24T17:00:00.000Z",
   "manualUnlock": false,
-  "appearance": { "paper": "burgundy", "pattern": "stripes", "ribbon": "gold", "ribbonStyle": "cross", "seal": "V" },
+  "appearance": { "paper": "burgundy", "pattern": "stripes", "patternColor": null, "patternOpacity": null, "ribbon": "gold", "ribbonStyle": "cross", "bow": "classic", "deco": "none", "seal": "V" },
   "reveal": "all",
   "items": [{ "id": "…", "name": "…", "description": "…", "file": { "id": "…", "name": "poukaz.pdf", "size": 12345 } }],
+  "photo": { "file": { "id": "…", "name": "hory.jpg", "size": 234567, "type": "image/jpeg", "w": 1600, "h": 1067 }, "caption": "Krkonoše 2025", "frame": "polaroid" },
   "createdAt": "…", "updatedAt": "…"
 }
 ```
 
-`appearance`: `paper` ∈ burgundy, emerald, midnight, ivory, champagne, blush, charcoal, silver · `pattern` ∈ plain, stripes, dots, stars, snow, tartan · `ribbon` ∈ gold, silver, red, green, white, black · `ribbonStyle` ∈ cross, single · `seal` = 0–2 znaky.
+`appearance`:
+- `paper` ∈ burgundy, scarlet, emerald, fir, midnight, plum, charcoal, ivory, frost, champagne, gold, blush, silver, kraft
+- `pattern` ∈ plain, stripes, dots, tartan, stars, snow, trees, baubles, holly, candy, gingerbread, deer, hearts
+- `patternColor` ∈ white, cream, gold, silver, bronze, red, green, navy, brown, black, nebo `null` = výchozí barva papíru
+- `patternOpacity` = 5–90 (%), nebo `null` = výchozí výraznost papíru
+- `ribbon` ∈ gold, silver, copper, red, burgundy, pink, green, navy, white, black · `ribbonStyle` ∈ cross, single, none
+- `bow` ∈ classic, double, rosette, small, none · `deco` ∈ none, holly, pine, candy, bauble, star, bells, orange · `seal` = 0–2 znaky
+
+`photo` (nebo `null`): obrázek nahraný stejnou dílnou, `caption` do 200 znaků, `frame` ∈ polaroid, postcard. V `PUT` vynechané `photo` = beze změny, `null` = odebrat (soubor se smaže).
 `reveal` ∈ `all` (najednou), `sequential` (postupně), `choice` (vybere příjemce). Neplatné hodnoty server nahradí výchozími; boxy uložené před zavedením těchto polí je dostanou automaticky.
 Veřejné `GET gifts/{code}` vrací i `appearance` (krabice se kreslí před otevřením), `open` vrací v `gift` i `reveal` a `appearance`.
 
