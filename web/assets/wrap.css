@@ -162,3 +162,19 @@ button.gift { cursor: pointer; }
 .gift.bow-none.deco-star .deco { bottom: 70%; width: 36%; }
 .gift.bow-none.deco-holly .deco, .gift.bow-none.deco-pine .deco { left: 50%; bottom: 20%; width: 96%; transform: translateX(-50%); }
 .gift .bow { z-index: 1; }
+
+/* paper and ribbon colours glide when the box changes (occasion switch, picking a paper in the workshop) */
+@property --pp-a { syntax: "<color>"; inherits: true; initial-value: #82162b; }
+@property --pp-b { syntax: "<color>"; inherits: true; initial-value: #6d0f20; }
+@property --pp-c { syntax: "<color>"; inherits: true; initial-value: #3f0712; }
+@property --pl-a { syntax: "<color>"; inherits: true; initial-value: #951a32; }
+@property --pl-b { syntax: "<color>"; inherits: true; initial-value: #7a1427; }
+@property --pl-c { syntax: "<color>"; inherits: true; initial-value: #5c0d1c; }
+@property --rb-d { syntax: "<color>"; inherits: true; initial-value: #8c6a2c; }
+@property --rb-m { syntax: "<color>"; inherits: true; initial-value: #d6b26a; }
+@property --rb-l { syntax: "<color>"; inherits: true; initial-value: #f6e3ad; }
+.gift {
+  transition: --pp-a .8s ease, --pp-b .8s ease, --pp-c .8s ease, --pl-a .8s ease, --pl-b .8s ease, --pl-c .8s ease,
+              --rb-d .8s ease, --rb-m .8s ease, --rb-l .8s ease;
+}
+@media (prefers-reduced-motion: reduce) { .gift { transition: none; } }

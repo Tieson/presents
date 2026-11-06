@@ -156,3 +156,19 @@ body::after {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* ---------- switching occasions: the palette glides instead of jumping ---------- */
+@property --velvet { syntax: "<color>"; inherits: true; initial-value: #0b241a; }
+@property --velvet-2 { syntax: "<color>"; inherits: true; initial-value: #0f2d21; }
+@property --velvet-deep { syntax: "<color>"; inherits: true; initial-value: #05140e; }
+@property --glow-top { syntax: "<color>"; inherits: true; initial-value: #174233; }
+@property --glow-bottom { syntax: "<color>"; inherits: true; initial-value: #2a0a12; }
+@property --burgundy { syntax: "<color>"; inherits: true; initial-value: #82162b; }
+@property --burgundy-2 { syntax: "<color>"; inherits: true; initial-value: #a01d37; }
+@property --gold { syntax: "<color>"; inherits: true; initial-value: #d6b26a; }
+@property --gold-light { syntax: "<color>"; inherits: true; initial-value: #f6e3ad; }
+html {
+  transition: --velvet .9s ease, --velvet-2 .9s ease, --velvet-deep .9s ease, --glow-top .9s ease, --glow-bottom .9s ease,
+              --burgundy .9s ease, --burgundy-2 .9s ease, --gold .9s ease, --gold-light .9s ease;
+}
+@media (prefers-reduced-motion: reduce) { html { transition: none; } }
