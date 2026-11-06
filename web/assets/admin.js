@@ -112,6 +112,12 @@ import "./themes.js";
   $("fTheme").innerHTML = Object.entries(TH.THEMES).map(([k, t]) => `<option value="${k}">${esc(t.name)}</option>`).join("");
   applyTheme(theme);                // the last occasion used on this device, until the workshop says otherwise
 
+  /* height of the sticky top bar (it wraps to two rows on phones): sticky things sit below it */
+  const topbar = document.querySelector(".topbar");
+  const setTopbarH = () => document.documentElement.style.setProperty("--topbar-h", `${topbar.offsetHeight}px`);
+  if ("ResizeObserver" in window) new ResizeObserver(setTopbarH).observe(topbar);
+  setTopbarH();
+
   /* what the server can do (e-mails are optional) */
   let info = { mail: false };
   rawApi("info").then(i => { info = i || info; applyInfo(); }, () => {});
