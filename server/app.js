@@ -57,7 +57,8 @@ export const DECOS = ["none", "holly", "pine", "candy", "bauble", "star", "bells
 export const PHOTO_FRAMES = ["polaroid", "postcard"];
 export const REVEALS = ["all", "sequential", "choice"];
 export const THEMES = ["christmas", "birthday", "wedding", "general"];   // occasion of a box (and the workshop's current one)
-const theme = v => (THEMES.includes(v) ? v : "christmas");
+/** unknown / not chosen → "general" (neutral); boxes saved before occasions existed were Christmas boxes */
+const theme = (v, fallback = "general") => (THEMES.includes(v) ? v : fallback);
 export const DEFAULT_APPEARANCE = {
   paper: "burgundy", pattern: "stripes", patternColor: null, patternOpacity: null,
   ribbon: "gold", ribbonStyle: "cross", bow: "classic", deco: "none", seal: "V"
@@ -100,7 +101,7 @@ const isImage = meta => IMAGE_TYPES.includes(fileType(meta));
 /** Boxes saved before these options existed get the defaults */
 function withDefaults(g) {
   if (!g) return g;
-  return { ...g, appearance: sanitizeAppearance(g.appearance), reveal: REVEALS.includes(g.reveal) ? g.reveal : "all", photo: g.photo || null, theme: theme(g.theme) };
+  return { ...g, appearance: sanitizeAppearance(g.appearance), reveal: REVEALS.includes(g.reveal) ? g.reveal : "all", photo: g.photo || null, theme: theme(g.theme, "christmas") };
 }
 const filesOf = g => [...g.items.filter(i => i.file).map(i => i.file), ...(g.photo?.file ? [g.photo.file] : [])];
 

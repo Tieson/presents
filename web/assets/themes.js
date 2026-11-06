@@ -14,6 +14,7 @@
       ledeTitle: "Pod stromečkem na tebe něco čeká.",
       ledeLocked: "Ježíšek už ti dárek nadělil. Rozbalit ho půjde na Štědrý večer.",
       docTitle: "Vánoční dárek",
+      home: { eyebrow: "Vánoční dárky", h1: ["Šťastné a veselé", "Vánoce"], lede: "Zabal blízkým vánoční dárek, nebo si rozbal ten svůj.", title: "Vánoční dárky" },
       defaultTitle: "Veselé Vánoce",
       postcard: "Veselé Vánoce",
       pwNote: "Ježíšek ti ho pošeptal. Napiš ho sem.",
@@ -40,6 +41,7 @@
       ledeTitle: "Oslava může začít.",
       ledeLocked: "Dárek už dorazil. Rozbalit ho půjde v den oslavy.",
       docTitle: "Narozeninový dárek",
+      home: { eyebrow: "Narozeninové dárky", h1: ["Dárek", "k narozeninám"], lede: "Zabal oslavenci dárek s poukazy, nebo si rozbal ten svůj.", title: "Narozeninové dárky" },
       defaultTitle: "Všechno nejlepší",
       postcard: "Všechno nejlepší!",
       pwNote: "Heslo ti prozradil ten, kdo dárek balil.",
@@ -48,7 +50,7 @@
       when: { first: null, custom: ["V den oslavy", "Nastav datum a hodinu, kdy se slaví."], anytime: "Hned, bez čekání" },
       appearance: { paper: "midnight", pattern: "dots", patternColor: "gold", ribbon: "pink", ribbonStyle: "cross", bow: "rosette", deco: "none", seal: "" },
       fx: "confetti", delivery: "balloons",
-      footline: () => "Ať ti to <b>pořádně</b> oslaví"
+      footline: () => "Ať se oslava <b>vydaří</b>"
     },
     wedding: {
       name: "Svatba",
@@ -59,6 +61,7 @@
       ledeTitle: "S láskou pro novomanžele.",
       ledeLocked: "Svatební dar už je na místě. Rozbalit ho půjde v den svatby.",
       docTitle: "Svatební dar",
+      home: { eyebrow: "Svatební dary", h1: ["Dar", "pro novomanžele"], lede: "Připrav novomanželům svatební dar, nebo si rozbalte ten svůj.", title: "Svatební dary" },
       defaultTitle: "Svatební dar",
       postcard: "Ať vám to spolu klape",
       pwNote: "Heslo vám prozradí ten, kdo dar chystal.",
@@ -78,6 +81,7 @@
       ledeTitle: "Někdo na tebe myslí.",
       ledeLocked: "Dárek už je tady. Rozbalit ho půjde v nastavený čas.",
       docTitle: "Dárek pro tebe",
+      home: { eyebrow: "Online dárky", h1: ["Dárek, který", "se rozbaluje"], lede: "Zabal blízkým dárek s poukazy, nebo si rozbal ten svůj.", title: "Dárky" },
       defaultTitle: "Dárek pro tebe",
       postcard: "S láskou",
       pwNote: "Heslo ti prozradil ten, kdo dárek balil.",
@@ -89,7 +93,7 @@
       footline: () => "Udělej někomu <b>radost</b> taky"
     }
   };
-  const DEFAULT = "christmas";
+  const DEFAULT = "general";          // nothing chosen yet → neutral
   const get = k => THEMES[k] || THEMES[DEFAULT];
   const keyOf = k => (THEMES[k] ? k : DEFAULT);
 

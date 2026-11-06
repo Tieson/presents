@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="cs">
+<html lang="cs" data-theme="general">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Ježíškova dílna</title>
+<title>Dárková dílna</title>
 <meta name="robots" content="noindex, nofollow">
 <meta name="theme-color" content="#05140e">
 <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml">
@@ -25,7 +25,7 @@
     <header class="welcome-head">
       <span class="monogram" aria-hidden="true"></span>
       <p class="eyebrow ruled" id="welcomeEyebrow">Online dárky</p>
-      <h1 id="welcomeTitle">Ježíškova <em class="foil">dílna</em></h1>
+      <h1 id="welcomeTitle">Dárková <em class="foil">dílna</em></h1>
       <p class="login-note">Zabal online dárky s poukazy v PDF. Bez registrace a bez hesla: dílnu otevírá tvůj tajný odkaz.</p>
     </header>
 
@@ -104,10 +104,10 @@
 <!-- ============ APP ============ -->
 <div id="app" class="app" hidden>
   <header class="topbar">
-    <a class="brand" href="dilna" aria-label="Ježíškova dílna">
+    <a class="brand" href="dilna" aria-label="Dílna">
       <span class="monogram small" aria-hidden="true"></span>
       <span class="brand-text">
-        <span class="brand-name" id="brandName">Ježíškova <em>dílna</em></span>
+        <span class="brand-name" id="brandName">Dárková <em>dílna</em></span>
         <span class="brand-sub" id="brandSub">Vánoční dárky · správa</span>
       </span>
     </a>
@@ -128,12 +128,12 @@
     <!-- shelf: list of boxes -->
     <aside class="shelf" aria-label="Dárkové boxy">
       <div class="shelf-head">
-        <p class="eyebrow" id="shelfEyebrow">Pod stromečkem</p>
+        <p class="eyebrow" id="shelfEyebrow">Pro radost</p>
         <span class="shelf-count" id="shelfCount"></span>
       </div>
       <ul class="gift-list" id="giftList"></ul>
       <div class="shelf-empty" id="shelfEmpty" hidden>
-        <p id="shelfEmptyText">Pod stromečkem je zatím prázdno.</p>
+        <p id="shelfEmptyText">Zatím tu není žádný dárek.</p>
         <button class="btn small" type="button" id="newGiftEmpty">Zabalit první dárek</button>
       </div>
     </aside>
@@ -254,7 +254,7 @@
         <section class="block">
           <header class="block-head">
             <h3>Heslo</h3>
-            <p>Na velikosti písmen ani na diakritice nezáleží, „Vánoce“ otevře i „vanoce“.</p>
+            <p>Na velikosti písmen ani na diakritice nezáleží, „Růže“ otevře i „ruze“.</p>
           </header>
           <label class="toggle">
             <input type="checkbox" id="fPwOn">
@@ -345,7 +345,7 @@
           </header>
           <div class="field">
             <label for="fMessage" class="label">Vzkaz</label>
-            <textarea id="fMessage" class="input" rows="4" maxlength="4000" placeholder="Ať jsou letošní Vánoce plné klidu a vůně cukroví…"></textarea>
+            <textarea id="fMessage" class="input" rows="4" maxlength="4000" placeholder="Jen tak, pro radost…"></textarea>
           </div>
           <div class="field">
             <label for="fSignature" class="label">Podpis</label>

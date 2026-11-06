@@ -115,6 +115,17 @@ import "./themes.js";
     document.documentElement.classList.remove("pending-theme");
   }
 
+  /* home page (no box yet): neutral, unless this visitor already works with an occasion */
+  const savedTheme = () => { try { return localStorage.getItem("xd:theme"); } catch { return null; } };
+  function applyHome(k) {
+    applyTheme(k);
+    $("eyebrow").textContent = T.home.eyebrow;
+    document.querySelector(".intro h1").innerHTML = `<span class="line">${esc(T.home.h1[0])}</span><em class="foil">${esc(T.home.h1[1])}</em>`;
+    $("lede").textContent = T.home.lede;
+    document.title = T.home.title;
+    W.apply(gift, T.appearance);
+  }
+
   /* ---------- the visitor's own workshop (session cookie), asked once ---------- */
   let mine;
   const myWorkshop = () => (mine ??= api("workshop").then(r => r.workshop, () => null));
@@ -135,12 +146,12 @@ import "./themes.js";
   function showHub() {
     show("hub");
     say("");
-    applyTheme(TH.DEFAULT);
-    $("lede").textContent = "Zabal blízkým dárek, nebo si rozbal ten svůj.";
-    W.apply(gift, W.DEFAULT);
-    document.title = "Vánoční dárky";
+    applyHome(savedTheme());
     wrapLinks($("hubState")).then(w => {
-      if (w) $("hubNote").innerHTML = `Vítej zpátky. Dílna <strong>${esc(w.name)}</strong> na tebe čeká.`;
+      if (w) {
+        if (w.theme && w.theme !== document.documentElement.dataset.theme && !states.hub.hidden) applyHome(w.theme);
+        $("hubNote").innerHTML = `Vítej zpátky. Tvoje dílna <strong>${esc(w.name)}</strong> na tebe čeká.`;
+      }
       scheduleFit();
     });
   }
@@ -153,9 +164,7 @@ import "./themes.js";
   function showCodeEntry(message) {
     show("code");
     say(message);
-    applyTheme(TH.DEFAULT);
-    $("lede").textContent = T.lede;
-    W.apply(gift, W.DEFAULT);
+    applyHome(savedTheme());
     setTimeout(() => $("codeInput").focus({ preventScroll: true }), 50);
   }
 
