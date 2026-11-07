@@ -132,8 +132,9 @@
       const k = Math.min(1, (now - c.t0) / c.ms);
       const e = k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;   // ease in-out
       const x = bez(c.x0, c.cx, c.x1, e), y = bez(c.y0, c.cy, c.y1, e);
-      c.trail.push({ x, y, life: 1, j: Math.random() });
-      for (let n = 0; n < 2; n++) {
+      // only while flying: after landing the trail fades out and the comet is dropped
+      if (k < 1) c.trail.push({ x, y, life: 1, j: Math.random() });
+      for (let n = 0; n < (k < 1 ? 2 : 0); n++) {
         sparks.push({ x: x + (Math.random() - .5) * 8, y: y + (Math.random() - .5) * 8, vx: (Math.random() - .5) * 1.2, vy: Math.random() * 1.2,
           life: 1, decay: .02 + Math.random() * .02, size: Math.random() * 2.4 + 1, rot: 0, vr: 0, c: Math.random() < .5 ? "#fff6d6" : "#f0c86a", shape: "dot" });
       }
