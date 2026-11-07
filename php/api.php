@@ -817,6 +817,10 @@ function unique_code(): string {
 function remove_orphan_files(string $owner, array $before, array $after): void {
     $keep = [];
     foreach ($after as $f) $keep[$f['id']] = true;
+    $gone = array_filter($before, function ($f) use ($keep) { return !isset($keep[$f['id']]); });
+    if (!$gone) return;
+    // a duplicated box shares its PDFs and photo: only delete what no box of the workshop uses any more
+    foreach (gifts_by_owner($owner) as $o) foreach (files_of($o) as $f) $keep[$f['id']] = true;
     $freed = 0;
     foreach ($before as $f) {
         if (!isset($keep[$f['id']])) { delete_file((string) $f['id']); $freed += (int) ($f['size'] ?? 0); }
@@ -1198,6 +1202,21 @@ try {
                 drop_gift_extras($g['code']);
                 remove_orphan_files($w['id'], files_of($g), []);
                 send_json(['ok' => true]);
+            }
+
+            // a copy of the saved box under a new code (shares the files; stats, schedule and recipient start fresh)
+            if (count($seg) === 4 && $seg[3] === 'duplicate' && $method === 'POST') {
+                if (count(gifts_by_owner($w['id'])) >= $MAX_GIFTS) fail(409, 'limit', "V jedné dílně může být nejvýš $MAX_GIFTS boxů.");
+                $now = now_iso();
+                $copy = array_merge($g, [
+                    'code' => unique_code(),
+                    'title' => mb_substr($g['title'] . ' (kopie)', 0, 120, 'UTF-8'),
+                    'recipientEmail' => '', 'notifiedAt' => null, 'ringAt' => null,
+                    'createdAt' => $now, 'updatedAt' => $now,
+                ]);
+                put_gift($copy);
+                $saved = sync_due(null, $copy);
+                send_json(admin_view($saved) + ['stats' => get_stats($saved['code'])], 201);
             }
 
             if (count($seg) === 4 && $seg[3] === 'regenerate-code' && $method === 'POST') {

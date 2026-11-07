@@ -831,3 +831,19 @@ textarea.input { resize: vertical; min-height: 96px; }
   }
   .look-stage .look-play { align-self: center; }
 }
+
+/* ---------- list: show unwrapped boxes too ---------- */
+.shelf-toggle { display: flex; align-items: center; gap: 10px; cursor: pointer; margin: -2px 4px 12px; font-size: 13px; color: var(--muted); width: fit-content; }
+.shelf-toggle[hidden] { display: none; }
+.shelf-toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.shelf-toggle .switch { transform: scale(.85); transform-origin: left center; margin-right: -4px; background: rgba(255,255,255,.12); }
+.shelf-toggle input:checked + .switch { background: var(--gold); }
+.shelf-toggle input:checked + .switch::after { transform: translateX(18px); background: var(--ink); }
+.shelf-toggle input:focus-visible + .switch { outline: 2px solid var(--gold-light); outline-offset: 2px; }
+.shelf-toggle:hover { color: var(--gold-light); }
+.shelf-toggle .count { opacity: .7; font-variant-numeric: tabular-nums; }
+
+/* ---------- editor head: status + duplicate ---------- */
+.head-side { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.dup-btn { display: inline-flex; align-items: center; gap: 7px; }
+@media (max-width: 640px) { .head-side { flex-direction: row; align-items: center; width: 100%; justify-content: space-between; } }

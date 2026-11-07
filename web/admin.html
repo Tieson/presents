@@ -131,6 +131,11 @@
         <span class="shelf-count" id="shelfCount"></span>
       </div>
       <div class="shelf-filter" id="themeFilter" role="radiogroup" aria-label="Zobrazit příležitost"></div>
+      <label class="shelf-toggle" id="openedToggle" hidden>
+        <input type="checkbox" id="showOpened">
+        <span class="switch" aria-hidden="true"></span>
+        <span>Ukázat i rozbalené <span class="count" id="openedCount"></span></span>
+      </label>
       <ul class="gift-list" id="giftList"></ul>
       <div class="shelf-empty" id="shelfEmpty" hidden>
         <p id="shelfEmptyText">Zatím tu není žádný dárek.</p>
@@ -163,7 +168,13 @@
               <div class="occasion-seg" id="fTheme" role="radiogroup" aria-labelledby="fThemeLabel"></div>
             </div>
           </div>
-          <span class="pill" id="statusPill"></span>
+          <div class="head-side">
+            <span class="pill" id="statusPill"></span>
+            <button type="button" class="chip dup-btn" id="dupGift" title="Vytvoří kopii boxu s novým kódem">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8"/></svg>
+              Duplikovat
+            </button>
+          </div>
         </div>
 
         <!-- appearance -->

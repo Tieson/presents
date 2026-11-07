@@ -82,6 +82,7 @@ import "./themes.js";
   const ALL_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg>`;
   const keyOfFilter = v => (v === "all" ? "all" : TH.THEMES[v] ? v : "all");
   let filter = (() => { try { return keyOfFilter(localStorage.getItem("xd:filter")); } catch { return "all"; } })();
+  let showOpened = (() => { try { return localStorage.getItem("xd:showOpened") === "1"; } catch { return false; } })();
   let theme = TH.DEFAULT;          // the page's current style
   let TT = TH.get(theme);
   const restTheme = () => (filter === "all" ? TH.DEFAULT : filter);
@@ -109,6 +110,11 @@ import "./themes.js";
     if (!draft) applyTheme(restTheme());
     renderList();
   }
+  $("showOpened").addEventListener("change", e => {
+    showOpened = e.target.checked;
+    try { localStorage.setItem("xd:showOpened", showOpened ? "1" : "0"); } catch { /* ignore */ }
+    renderList();
+  });
   $("themeFilter").addEventListener("click", e => {
     const b = e.target.closest("[data-k]");
     if (b) setFilter(b.dataset.k);
@@ -421,10 +427,16 @@ import "./themes.js";
 
   function renderList() {
     const ul = $("giftList");
-    const shown = filter === "all" ? list : list.filter(g => TH.keyOf(g.theme) === filter);
+    const inTheme = filter === "all" ? list : list.filter(g => TH.keyOf(g.theme) === filter);
+    const opened = inTheme.filter(g => g.stats?.opens);
+    const shown = showOpened ? inTheme : inTheme.filter(g => !g.stats?.opens || (cur && g.code === cur.code));
     renderFilter();
+    $("openedToggle").hidden = !opened.length;
+    $("showOpened").checked = showOpened;
+    $("openedCount").textContent = `(${opened.length})`;
     $("shelfCount").textContent = shown.length ? `${shown.length} ${plural(shown.length, "box", "boxy", "boxů")}` : "";
     $("shelfEmpty").hidden = shown.length > 0;
+    if (!shown.length && inTheme.length) $("shelfEmptyText").textContent = "Všechny dárky tady už jsou rozbalené.";
     ul.innerHTML = shown.map(g => {
       const st = statusOf(g);
       const s = g.stats || {};
@@ -1280,19 +1292,22 @@ import "./themes.js";
   }
 
   /* ---------- save / discard / create / delete ---------- */
-  async function save() {
-    if (!draft || saving || !isDirty()) return;
-    if (Object.values(uploads).some(u => !u.error)) { toast("Počkej, až se PDF nahraje.", true); return; }
-    if (photoUpload && !photoUpload.error) { toast("Počkej, až se fotka nahraje.", true); return; }
+  /** checks the draft before it goes to the server; false = told the user what's missing */
+  function readyToSend() {
+    if (Object.values(uploads).some(u => !u.error)) { toast("Počkej, až se PDF nahraje.", true); return false; }
+    if (photoUpload && !photoUpload.error) { toast("Počkej, až se fotka nahraje.", true); return false; }
     if (pw.on && !cur.hasPassword && !pw.value) {
       $("fPw").classList.add("invalid");
       $("fPw").focus();
       $("fPw").scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "center" });
       toast("Zadej heslo, nebo ochranu heslem vypni.", true);
-      return;
+      return false;
     }
-    if (!draft.anytime && isNaN(Date.parse(draft.openAt))) { toast("Doplň datum a čas odemčení.", true); $("fOpenAt").focus(); return; }
-
+    if (!draft.anytime && isNaN(Date.parse(draft.openAt))) { toast("Doplň datum a čas odemčení.", true); $("fOpenAt").focus(); return false; }
+    return true;
+  }
+  /** the PUT body for the draft; newPw = the password typed in, if any */
+  function draftBody() {
     const body = {
       title: draft.title.trim() || "Dárek",
       showTitle: draft.showTitle,
@@ -1311,6 +1326,13 @@ import "./themes.js";
     let newPw = null;
     if (!pw.on && cur.hasPassword) body.password = null;
     if (pw.on && pw.value) { newPw = normalizePassword(pw.value); body.password = newPw; }
+    return { body, newPw };
+  }
+
+  async function save() {
+    if (!draft || saving || !isDirty()) return;
+    if (!readyToSend()) return;
+    const { body, newPw } = draftBody();
 
     const movedTo = draft.theme !== TH.keyOf(cur.theme) ? draft.theme : null;   // the box was moved to another occasion
     saving = true; updateDirty();
@@ -1330,6 +1352,52 @@ import "./themes.js";
   }
 
   $("save").addEventListener("click", save);
+
+  /* duplicate: a copy with a new code opens right away; unsaved edits move over to the copy */
+  async function duplicate() {
+    if (!cur || saving) return;
+    const dirty = isDirty();
+    if (dirty && !readyToSend()) return;
+    if (!(await confirmDialog(dirty ? {
+      title: "Duplikovat i s neuloženými změnami?",
+      text: `Kopie dostane všechno, co máš teď rozpracované. „${cur.title}“ zůstane tak, jak byl naposledy uložený, a neuložené změny se v něm neuloží.`,
+      ok: "Duplikovat se změnami"
+    } : {
+      title: `Duplikovat „${cur.title}“?`,
+      text: "Vznikne kopie s novým kódem a stejným obsahem, vzhledem i heslem. E-mail obdarovaného a statistiky se nepřenesou.",
+      ok: "Duplikovat"
+    }))) return;
+    saving = true; updateDirty();
+    const from = cur.code;
+    let copy = null;
+    try {
+      copy = await api(`admin/gifts/${encodeURIComponent(from)}/duplicate`, { method: "POST" });
+      let g = copy;
+      if (dirty) {
+        const { body, newPw } = draftBody();
+        body.title = `${body.title} (kopie)`.slice(0, 120);
+        body.recipientEmail = "";
+        g = await api(`admin/gifts/${encodeURIComponent(copy.code)}`, { method: "PUT", body });
+        if (newPw) fresh[g.code] = newPw;
+        else if (body.password !== null && fresh[from]) fresh[g.code] = fresh[from];
+      } else if (fresh[from]) fresh[g.code] = fresh[from];
+      saving = false;
+      setCurrent(g);
+      await loadList();
+      if (filter !== "all" && TH.keyOf(g.theme) !== filter) setFilter(g.theme);
+      $("layout").classList.add("show-editor");
+      scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
+      const ti = $("fTitle");
+      ti.focus({ preventScroll: true }); ti.select();
+      toast(`Kopie je připravená. Kód ${g.code}`);
+    } catch (err) {
+      saving = false; updateDirty();
+      // the edits didn't make it into the copy: don't leave a half-made copy behind
+      if (copy) { try { await api(`admin/gifts/${encodeURIComponent(copy.code)}`, { method: "DELETE" }); } catch { /* ignore */ } }
+      if (err.status !== 401) toast(err.message, true);
+    }
+  }
+  $("dupGift").addEventListener("click", duplicate);
   $("discard").addEventListener("click", async () => {
     if (await confirmDialog({ title: "Vrátit neuložené změny?", text: "Box se vrátí do stavu z posledního uložení. Smazaný nebude.", ok: "Vrátit změny" })) { setCurrent(cur); toast("Změny vráceny"); }
   });

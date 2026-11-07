@@ -417,6 +417,9 @@ export function createApp({
   /** before/after: lists of { id, size } still referenced by a box */
   async function removeOrphanFiles(w, before, after) {
     const keep = new Set(after.map(f => f.id));
+    if (before.every(f => keep.has(f.id))) return;
+    // a duplicated box shares its PDFs and photo: only delete what no box of the workshop uses any more
+    for (const o of await storage.listGiftsByOwner(w.id)) for (const f of filesOf(o)) keep.add(f.id);
     let freed = 0;
     for (const f of before) {
       if (!keep.has(f.id)) {
@@ -788,6 +791,26 @@ export function createApp({
           await dropGiftExtras(g.code);
           await removeOrphanFiles(w, filesOf(g), []);
           return json({ ok: true });
+        }
+
+        // a copy of the saved box under a new code (shares the files; stats, schedule and recipient start fresh)
+        if (seg.length === 4 && seg[3] === "duplicate" && method === "POST") {
+          if (await storage.countGiftsByOwner(w.id) >= maxGifts) {
+            return fail(409, "limit", `V jedné dílně může být nejvýš ${maxGifts} boxů.`);
+          }
+          const now = new Date().toISOString();
+          const copy = {
+            ...g,
+            code: await uniqueCode(),
+            title: `${g.title} (kopie)`.slice(0, 120),
+            recipientEmail: "", notifiedAt: null, ringAt: null,
+            items: g.items.map(i => ({ ...i, file: i.file ? { ...i.file } : null })),
+            photo: g.photo ? { ...g.photo, file: { ...g.photo.file } } : null,
+            createdAt: now, updatedAt: now
+          };
+          await storage.putGift(copy);
+          const saved = await syncDue(null, copy);
+          return json({ ...adminView(saved), stats: await storage.getStats(saved.code) }, 201);
         }
 
         if (seg.length === 4 && seg[3] === "regenerate-code" && method === "POST") {

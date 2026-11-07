@@ -127,6 +127,18 @@ export async function run(base) {
   r = await A("GET", "admin/files/" + img); ok(r.s === 404, "removed photo deleted");
   r = await A("GET", "workshop"); ok(r.d.workshop.usedBytes === pdf.length, "its space freed");
 
+  /* ---------- duplicate: shares the files, keeps the password, starts fresh ---------- */
+  r = await B("POST", `admin/gifts/${code}/duplicate`); ok(r.s === 404, "B can't duplicate A's box");
+  r = await A("POST", `admin/gifts/${code}/duplicate`);
+  const dup = r.d.code;
+  ok(r.s === 201 && dup !== code && r.d.title === "T (kopie)" && r.d.hasPassword && r.d.items.some(i => i.file?.id === fid) && r.d.stats.views === 0 && !r.d.recipientEmail, "duplicate: new code, same content + password, fresh stats");
+  r = await anon("POST", `gifts/${dup}/open`, { password: "vanoce" }); ok(r.s === 200 && r.d.gift.items.length === 1 && r.d.gift.items[0].name === "Masáž", "the copy opens with the same password");
+  r = await A("PUT", "admin/gifts/" + dup, { title: "Kopie bez PDF", anytime: true, items: [{ id: "abcd2", name: "Večeře" }] });
+  r = await A("GET", "admin/files/" + fid); ok(r.s === 200, "dropping the PDF in the copy keeps it for the original");
+  r = await A("DELETE", "admin/gifts/" + dup); ok(r.s === 200, "delete the copy");
+  r = await A("GET", "admin/files/" + fid); ok(r.s === 200, "…the shared PDF stays");
+  r = await A("GET", "workshop"); ok(r.d.workshop.usedBytes === pdf.length, "space counted once");
+
   /* ---------- code, files, password removal ---------- */
   r = await A("PUT", "admin/gifts/" + code, { title: "X", anytime: true, password: null, items: [{ id: "abcd2", name: "Večeře" }] });
   ok(r.s === 200 && !r.d.hasPassword, "remove password, drop pdf item");
