@@ -60,13 +60,19 @@ export async function run(base) {
   r = await B("POST", "admin/gifts", {}); const codeB = r.d.code;
   r = await B("PUT", "admin/gifts/" + codeB, { title: "B", anytime: true, items: [{ id: "steal1", name: "x", file: { id: fid } }] });
   ok(r.s === 200 && r.d.items[0].file === null, "B can't attach A's PDF to own box");
-  r = await B("POST", `gifts/${code}/open`, { preview: true }); ok(r.s === 401, "B can't preview A's box");
+  r = await B("POST", `gifts/${code}/open`, { preview: true }); ok(r.s === 403 && !r.d.gift, "B can't preview A's box");
+  r = await B("GET", "gifts/" + code); ok(r.s === 200 && r.d.owner === false, "…and isn't told it's the owner");
+  r = await A("GET", "gifts/" + code); ok(r.s === 200 && r.d.owner === true, "the creator is");
+  r = await B("PUT", "admin/gifts/" + codeB, { title: "B zamčený", anytime: false, openAt: "2030-12-24T17:00:00.000Z", items: [{ id: "tajne1", name: "Tajný obsah", file: null }] });
+  r = await anon("POST", `gifts/${codeB}/open`, { preview: true }, { csrf: false }); ok(r.s === 403 && !r.d.gift, "?preview=1 without a password: no content for strangers");
+  r = await A("POST", `gifts/${codeB}/open`, { preview: true }); ok(r.s === 403 && !r.d.gift, "…nor for another workshop");
+  r = await anon("POST", `gifts/${codeB}/open`, {}, { csrf: false }); ok(r.s === 423 && !r.d.gift, "plain open of a locked box without a password → 423");
 
   /* ---------- recipients (public) ---------- */
   r = await anon("GET", "gifts/" + code.toUpperCase().replace("-", " ")); ok(r.s === 200 && r.d.locked && r.d.hasPassword && r.d.title === "Dárek pro sestřičku", "public meta (code normalized)");
   r = await anon("POST", `gifts/${code}/open`, { password: "spatne" }, { csrf: false }); ok(r.s === 401, "wrong password 401");
   r = await anon("POST", `gifts/${code}/open`, { password: "Vánoce".normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase() }, { csrf: false }); ok(r.s === 423 && r.d.openAt, "right password but locked 423");
-  r = await A("POST", `gifts/${code}/open`, { preview: true }); ok(r.s === 200 && r.d.preview, "owner preview bypasses lock");
+  r = await A("POST", `gifts/${code}/open`, { preview: true }); ok(r.s === 200 && r.d.preview && r.d.token === null, "owner preview bypasses lock, hands out no token");
   r = await A("PUT", "admin/gifts/" + code, { title: "Dárek pro sestřičku", showTitle: false, anytime: false, openAt: "2030-12-24T17:00:00.000Z", manualUnlock: true, items: [{ id: "abcd2", name: "Večeře", description: "", file: null }, { id: "abcd1", name: "Masáž", description: "60 min", file: { id: fid } }] });
   ok(r.s === 200 && !r.d.locked && r.d.hasPassword && r.d.items[0].id === "abcd2", "manual unlock + reorder, password kept");
   r = await anon("POST", `gifts/${code}/open`, { password: "vanoce" }); ok(r.s === 200 && r.d.gift.title === null && r.d.gift.items.length === 2, "open ok, hidden title, items visible");
@@ -85,6 +91,10 @@ export async function run(base) {
   r = await A("PUT", "admin/gifts/" + code, { title: "T", anytime: true, appearance: { paper: "kraft", pattern: "gingerbread", patternColor: "red", patternOpacity: 140, ribbon: "copper", ribbonStyle: "none", bow: "rosette", deco: "holly", seal: "T" }, items: items1 });
   ok(r.d.appearance.paper === "kraft" && r.d.appearance.pattern === "gingerbread" && r.d.appearance.patternColor === "red" && r.d.appearance.patternOpacity === 90
     && r.d.appearance.ribbonStyle === "none" && r.d.appearance.bow === "rosette" && r.d.appearance.deco === "holly", "new papers, patterns, pattern colour + opacity (capped), bows, decorations");
+  r = await A("PUT", "admin/gifts/" + code, { title: "T", anytime: true, appearance: { paper: "blush", pattern: "confetti", patternColor: "paper", deco: "partyhat" }, items: items1 });
+  ok(r.d.appearance.pattern === "confetti" && r.d.appearance.patternColor === "paper" && r.d.appearance.deco === "partyhat", "occasion patterns, tone-on-tone colour, new decorations");
+  r = await A("PUT", "admin/gifts/" + code, { title: "T", anytime: true, appearance: { pattern: "lace", patternColor: "lilac", deco: "rings" }, items: items1 });
+  ok(r.d.appearance.pattern === "lace" && r.d.appearance.patternColor === "lilac" && r.d.appearance.deco === "rings", "wedding pattern + decoration");
   r = await A("PUT", "admin/gifts/" + code, { title: "T", anytime: true, appearance: { paper: "kraft", patternColor: "pink<", patternOpacity: "x", bow: "huge", deco: "<img>" }, items: items1 });
   ok(r.d.appearance.patternColor === null && r.d.appearance.patternOpacity === null && r.d.appearance.bow === "classic" && r.d.appearance.deco === "none", "invalid colour/opacity/bow/decoration → defaults");
 
@@ -116,6 +126,18 @@ export async function run(base) {
   ok(r.d.photo === null, "remove photo");
   r = await A("GET", "admin/files/" + img); ok(r.s === 404, "removed photo deleted");
   r = await A("GET", "workshop"); ok(r.d.workshop.usedBytes === pdf.length, "its space freed");
+
+  /* ---------- duplicate: shares the files, keeps the password, starts fresh ---------- */
+  r = await B("POST", `admin/gifts/${code}/duplicate`); ok(r.s === 404, "B can't duplicate A's box");
+  r = await A("POST", `admin/gifts/${code}/duplicate`);
+  const dup = r.d.code;
+  ok(r.s === 201 && dup !== code && r.d.title === "T (kopie)" && r.d.hasPassword && r.d.items.some(i => i.file?.id === fid) && r.d.stats.views === 0 && !r.d.recipientEmail, "duplicate: new code, same content + password, fresh stats");
+  r = await anon("POST", `gifts/${dup}/open`, { password: "vanoce" }); ok(r.s === 200 && r.d.gift.items.length === 1 && r.d.gift.items[0].name === "Masáž", "the copy opens with the same password");
+  r = await A("PUT", "admin/gifts/" + dup, { title: "Kopie bez PDF", anytime: true, items: [{ id: "abcd2", name: "Večeře" }] });
+  r = await A("GET", "admin/files/" + fid); ok(r.s === 200, "dropping the PDF in the copy keeps it for the original");
+  r = await A("DELETE", "admin/gifts/" + dup); ok(r.s === 200, "delete the copy");
+  r = await A("GET", "admin/files/" + fid); ok(r.s === 200, "…the shared PDF stays");
+  r = await A("GET", "workshop"); ok(r.d.workshop.usedBytes === pdf.length, "space counted once");
 
   /* ---------- code, files, password removal ---------- */
   r = await A("PUT", "admin/gifts/" + code, { title: "X", anytime: true, password: null, items: [{ id: "abcd2", name: "Večeře" }] });

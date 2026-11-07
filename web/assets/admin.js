@@ -68,64 +68,87 @@ import "./themes.js";
   /* ---------- workshop: create / open with the secret link / account ---------- */
   let ws = null;                                   // current workshop { id, name, email, key, … }
 
-  /* ---------- occasion: Christmas / birthday / wedding / just because ---------- */
+  /* ---------- occasion: Christmas / birthday / wedding / just because ----------
+     The list shows every box; the filter under its heading narrows it to one occasion.
+     The page takes the style of the open box (live while its occasion is being switched);
+     with no box open it follows the filter, or stays neutral for "Vše". */
   const SHELF = {
-    christmas: ["Pod stromečkem", "Pod stromečkem je zatím prázdno.", "Zabalit první dárek"],
+    all: ["Všechny dárky", "Zatím tu není žádný dárek.", "Zabalit první dárek"],
+    christmas: ["Pod stromečkem", "Pod stromečkem je zatím prázdno.", "Zabalit vánoční dárek"],
     birthday: ["Na oslavu", "Zatím tu není žádný narozeninový dárek.", "Zabalit dárek k narozeninám"],
     wedding: ["Na svatbu", "Zatím tu není žádný svatební dar.", "Připravit svatební dar"],
-    general: ["Pro radost", "Zatím tu není žádný dárek.", "Zabalit první dárek"]
+    general: ["Pro radost", "Zatím tu není žádný dárek pro radost.", "Zabalit dárek pro radost"]
   };
-  let theme = (() => { try { return TH.keyOf(localStorage.getItem("xd:theme")); } catch { return TH.DEFAULT; } })();
+  const ALL_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg>`;
+  const keyOfFilter = v => (v === "all" ? "all" : TH.THEMES[v] ? v : "all");
+  let filter = (() => { try { return keyOfFilter(localStorage.getItem("xd:filter")); } catch { return "all"; } })();
+  let showOpened = (() => { try { return localStorage.getItem("xd:showOpened") === "1"; } catch { return false; } })();
+  let theme = TH.DEFAULT;          // the page's current style
   let TT = TH.get(theme);
-  function applyTheme(k, { save = false } = {}) {
+  const restTheme = () => (filter === "all" ? TH.DEFAULT : filter);
+
+  function applyTheme(k) {
     theme = TH.keyOf(k);
     TT = TH.applyPage(theme);
-    try { localStorage.setItem("xd:theme", theme); } catch { /* ignore */ }
     const [a, b] = TT.workshop;
     $("brandName").innerHTML = `${esc(a)} <em>${esc(b)}</em>`;
     $("welcomeTitle").innerHTML = `${esc(a)} <em class="foil">${esc(b)}</em>`;
     document.title = ws ? `${ws.name} · ${a} ${b}` : `${a} ${b}`;
-    const [eyebrow, empty, cta] = SHELF[theme];
+  }
+  function renderFilter() {
+    const opts = [["all", "Vše", ALL_ICON, list.length], ...Object.entries(TH.THEMES).map(([k, t]) => [k, t.name, TH.ICONS[k], list.filter(g => TH.keyOf(g.theme) === k).length])];
+    $("themeFilter").innerHTML = opts.map(([k, name, icon, n]) =>
+      `<button type="button" role="radio" data-k="${k}" aria-checked="${k === filter}" tabindex="${k === filter ? 0 : -1}" title="${esc(name)}">${icon}<span class="tname">${esc(name)}</span><span class="count">${n}</span></button>`).join("");
+    const [eyebrow, empty, cta] = SHELF[filter];
     $("shelfEyebrow").textContent = eyebrow;
     $("shelfEmptyText").textContent = empty;
     $("newGiftEmpty").textContent = cta;
-    renderSwitch();
-    if (ws) renderList();
-    if (save && ws) api("workshop", { method: "PUT", body: { theme } }).then(r => { ws = r.workshop; }, () => {});
   }
-  function renderSwitch() {
-    $("themeSwitch").innerHTML = Object.entries(TH.THEMES).map(([k, t]) => {
-      const n = list.filter(g => TH.keyOf(g.theme) === k).length;
-      return `<button type="button" role="radio" data-k="${k}" aria-checked="${k === theme}" title="${esc(t.name)}">${TH.ICONS[k]}<span class="tname">${esc(t.name)}</span>${n ? `<span class="count">${n}</span>` : ""}</button>`;
-    }).join("");
+  function setFilter(k) {
+    filter = keyOfFilter(k);
+    try { localStorage.setItem("xd:filter", filter); } catch { /* ignore */ }
+    if (!draft) applyTheme(restTheme());
+    renderList();
   }
-  /** Switching the occasion: the open box belongs to the old one, so leave it (ask if it has unsaved edits) */
-  async function switchTheme(k) {
-    if (k === theme) return;
-    if (cur && TH.keyOf(cur.theme) !== k) {
-      if (isDirty() && !(await confirmDialog({ title: "Zahodit neuložené změny?", text: `V boxu „${draft.title}“ máš neuložené změny.`, ok: "Zahodit" }))) return;
-      cur = null; draft = null;
-      showEmptyEditor();
-      history.replaceState(null, "", location.pathname + location.search);
-    }
-    applyTheme(k, { save: true });
-    // on a wide screen open the first box of that occasion right away
-    const first = list.find(g => TH.keyOf(g.theme) === k);
-    if (!cur && first && !matchMedia("(max-width: 900px)").matches) select(first.code, true);
-  }
-  $("themeSwitch").addEventListener("click", e => {
-    const b = e.target.closest("[data-k]");
-    if (b) switchTheme(b.dataset.k);
+  $("showOpened").addEventListener("change", e => {
+    showOpened = e.target.checked;
+    try { localStorage.setItem("xd:showOpened", showOpened ? "1" : "0"); } catch { /* ignore */ }
+    renderList();
   });
-  $("themeSwitch").addEventListener("keydown", async e => {
+  $("themeFilter").addEventListener("click", e => {
+    const b = e.target.closest("[data-k]");
+    if (b) setFilter(b.dataset.k);
+  });
+  $("themeFilter").addEventListener("keydown", e => {
     if (!["ArrowRight", "ArrowLeft"].includes(e.key)) return;
     e.preventDefault();
-    const keys = Object.keys(TH.THEMES), i = keys.indexOf(theme);
-    await switchTheme(keys[(i + (e.key === "ArrowRight" ? 1 : -1) + keys.length) % keys.length]);
-    $("themeSwitch").querySelector('[aria-checked="true"]')?.focus();
+    const keys = ["all", ...Object.keys(TH.THEMES)], i = keys.indexOf(filter);
+    setFilter(keys[(i + (e.key === "ArrowRight" ? 1 : -1) + keys.length) % keys.length]);
+    $("themeFilter").querySelector('[aria-checked="true"]')?.focus();
   });
-  $("fTheme").innerHTML = Object.entries(TH.THEMES).map(([k, t]) => `<option value="${k}">${esc(t.name)}</option>`).join("");
-  applyTheme(theme);                // the last occasion used on this device, until the workshop says otherwise
+
+  /* the box's occasion: switching it restyles everything at once, saving makes it stick */
+  $("fTheme").innerHTML = Object.entries(TH.THEMES).map(([k, t]) =>
+    `<button type="button" role="radio" data-k="${k}">${TH.ICONS[k]}<span>${esc(t.name)}</span></button>`).join("");
+  function setBoxTheme(k) {
+    if (!draft) return;
+    draft.theme = TH.keyOf(k);
+    if (draft.theme !== "christmas" && mode === "christmas") { mode = "custom"; document.querySelectorAll('input[name="when"]').forEach(r => { r.checked = r.value === "custom"; }); }
+    applyTheme(draft.theme);
+    renderOccasion(); renderWhen(); renderLook(); updateDirty();
+  }
+  $("fTheme").addEventListener("click", e => {
+    const b = e.target.closest("[data-k]");
+    if (b) setBoxTheme(b.dataset.k);
+  });
+  $("fTheme").addEventListener("keydown", e => {
+    if (!["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp"].includes(e.key) || !draft) return;
+    e.preventDefault();
+    const keys = Object.keys(TH.THEMES), i = keys.indexOf(draft.theme);
+    setBoxTheme(keys[(i + (e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : -1) + keys.length) % keys.length]);
+    $("fTheme").querySelector('[aria-checked="true"]')?.focus();
+  });
+  applyTheme(restTheme());
 
   /* height of the sticky top bar (it wraps to two rows on phones): sticky things sit below it */
   const topbar = document.querySelector(".topbar");
@@ -168,8 +191,7 @@ import "./themes.js";
     const first = !ws || ws.id !== w.id;
     ws = w;
     $("brandSub").textContent = w.name;
-    if (first && w.theme) applyTheme(w.theme);
-    else document.title = `${w.name} · ${TT.workshop.join(" ")}`;
+    document.title = `${w.name} · ${TT.workshop.join(" ")}`;
   }
 
   async function busy(btn, fn) {
@@ -405,10 +427,16 @@ import "./themes.js";
 
   function renderList() {
     const ul = $("giftList");
-    const shown = list.filter(g => TH.keyOf(g.theme) === theme);
-    renderSwitch();
+    const inTheme = filter === "all" ? list : list.filter(g => TH.keyOf(g.theme) === filter);
+    const opened = inTheme.filter(g => g.stats?.opens);
+    const shown = showOpened ? inTheme : inTheme.filter(g => !g.stats?.opens || (cur && g.code === cur.code));
+    renderFilter();
+    $("openedToggle").hidden = !opened.length;
+    $("showOpened").checked = showOpened;
+    $("openedCount").textContent = `(${opened.length})`;
     $("shelfCount").textContent = shown.length ? `${shown.length} ${plural(shown.length, "box", "boxy", "boxů")}` : "";
     $("shelfEmpty").hidden = shown.length > 0;
+    if (!shown.length && inTheme.length) $("shelfEmptyText").textContent = "Všechny dárky tady už jsou rozbalené.";
     ul.innerHTML = shown.map(g => {
       const st = statusOf(g);
       const s = g.stats || {};
@@ -417,7 +445,7 @@ import "./themes.js";
       return `<li>
         <button type="button" class="gl-item${cur && g.code === cur.code ? " active" : ""}${st.ok ? " open" : ""}" data-code="${esc(g.code)}">
           <span class="gl-box rb-${W.normalize(g.appearance).ribbonStyle}" style="--w:46px;${esc(styleVars(g.appearance))}" aria-hidden="true"><span class="lock-dot">${lockSvg(st.ok)}</span></span>
-          <span class="gl-title">${esc(g.title)}</span>
+          <span class="gl-title">${filter === "all" ? `<span class="gl-occ" title="${esc(TH.get(g.theme).name)}">${TH.ICONS[TH.keyOf(g.theme)]}</span>` : ""}${esc(g.title)}</span>
           <span class="gl-sub"><span class="mono">${esc(g.code)}</span><span>${g.itemCount} ${plural(g.itemCount, "položka", "položky", "položek")}</span></span>
           <span class="gl-flags">
             <span class="flag lock ${st.ok ? "ok" : "wait"}" title="${st.ok ? "Obdarovaný si dárek může rozbalit" : "Obdarovaný si ho zatím nerozbalí"}">${lockSvg(st.ok)}${esc(st.text)}</span>
@@ -436,6 +464,8 @@ import "./themes.js";
   });
 
   function showEmptyEditor() {
+    cur = null; draft = null; snapshot = "";
+    applyTheme(restTheme());
     $("editor").hidden = true;
     $("emptyEditor").hidden = false;
     $("savebar").hidden = true;
@@ -485,6 +515,7 @@ import "./themes.js";
   function setCurrent(g) {
     cur = g;
     draft = clone(g);
+    applyTheme(draft.theme);
     pw = { on: g.hasPassword, editing: !g.hasPassword, value: "" };
     for (const k in uploads) delete uploads[k];
     fillForm();
@@ -531,7 +562,7 @@ import "./themes.js";
     $("xmasLabel").textContent = `${formatWithYear(xmasIso())}`;
     document.querySelectorAll('input[name="reveal"]').forEach(r => { r.checked = r.value === draft.reveal; });
     $("fSeal").value = draft.appearance.seal;
-    $("fTheme").value = draft.theme;
+    $("fTheme").querySelectorAll("[data-k]").forEach(b => { const on = b.dataset.k === draft.theme; b.setAttribute("aria-checked", on); b.tabIndex = on ? 0 : -1; });
     $("fRecipientEmail").value = draft.recipientEmail;
     renderOccasion();
     renderStats();
@@ -580,6 +611,7 @@ import "./themes.js";
   /* texts that follow the box's occasion: unlock choices, message hint, the ring button */
   function renderOccasion() {
     const T = TH.get(draft.theme);
+    $("fTheme").querySelectorAll("[data-k]").forEach(b => { const on = b.dataset.k === draft.theme; b.setAttribute("aria-checked", on); b.tabIndex = on ? 0 : -1; });
     const card = v => document.querySelector(`input[name="when"][value="${v}"]`).closest(".when-card");
     card("christmas").hidden = draft.theme !== "christmas";
     card("custom").querySelector(".wc-title").textContent = T.when.custom[0];
@@ -592,11 +624,6 @@ import "./themes.js";
       ? "V čase odemčení mu pošleme e-mail s odkazem na dárek. Heslo v e-mailu nebude."
       : "Posílání e-mailů zatím není na serveru zapnuté. Adresa se uloží a použije, až ho zapneš.";
   }
-  $("fTheme").addEventListener("change", () => {
-    draft.theme = TH.keyOf($("fTheme").value);
-    if (draft.theme !== "christmas" && mode === "christmas") { mode = "custom"; document.querySelectorAll('input[name="when"]').forEach(r => { r.checked = r.value === "custom"; }); }
-    renderOccasion(); renderWhen(); updateDirty();
-  });
   $("fRecipientEmail").addEventListener("input", e => { draft.recipientEmail = e.target.value; updateDirty(); });
 
   /* who looked: views and unwraps (the creator's own visits don't count) */
@@ -632,8 +659,10 @@ import "./themes.js";
   function updateDirty() {
     const dirty = isDirty();
     $("savebar").classList.toggle("dirty", dirty);
-    $("saveState").textContent = saving ? "Ukládám…" : dirty ? "Neuložené změny" : "Vše uloženo";
+    $("savebar").classList.toggle("saving", saving);
+    $("saveState").textContent = saving ? "Ukládám…" : dirty ? "Uložit změny" : "Uloženo";
     $("save").disabled = !dirty || saving;
+    $("save").title = dirty ? "Neuložené změny · Ctrl+S" : "Všechno je uložené";
     $("discard").disabled = !dirty || saving;
     if (draft) $("itemCount").textContent = draft.items.length ? `· ${draft.items.length}` : "";
   }
@@ -724,19 +753,55 @@ import "./themes.js";
     });
   }
   buildPicker($("paperPicker"), Object.entries(W.PAPERS), "paper", "paper");
-  buildPicker($("patternPicker"), Object.entries(W.PATTERNS), "tile", "pattern");
+  /* patterns + decorations come in groups by occasion: the general ones always (no heading),
+     the box's occasion unfolded, the others folded */
+  function grouped(el, map, cls, item) {
+    el.classList.add("pick-groups");
+    const by = g => Object.entries(map).filter(([, v]) => v.g === g);
+    el.innerHTML = `<div class="${cls}">${by("general").map(item).join("")}</div>` + W.GROUPS.filter(g => g !== "general").map(g =>
+      `<details class="pick-group" data-g="${g}"><summary>${TH.ICONS[g]}<span>${esc(TH.get(g).name)}</span><span class="count">${by(g).length}</span></summary><div class="${cls}">${by(g).map(item).join("")}</div></details>`).join("");
+  }
+  const groupState = new Map();          // picker → "<code>:<theme>" the folds were last arranged for
+  function arrangeGroups(el, selectedG) {
+    const sig = `${cur?.code}:${draft.theme}`;
+    if (groupState.get(el) === sig) return;
+    groupState.set(el, sig);
+    const groups = [...el.querySelectorAll(".pick-group")];
+    groups.sort((x, y) => (y.dataset.g === draft.theme) - (x.dataset.g === draft.theme) || W.GROUPS.indexOf(x.dataset.g) - W.GROUPS.indexOf(y.dataset.g));
+    for (const d of groups) { el.appendChild(d); d.open = d.dataset.g === draft.theme || d.dataset.g === selectedG; }
+  }
+  grouped($("patternPicker"), W.PATTERNS, "swatches tiles", ([k, v]) =>
+    `<button type="button" class="sw tile" role="radio" data-k="${k}" aria-label="${esc(v.name)}" title="${esc(v.name)}"><span>${esc(v.name)}</span></button>`);
+  for (const [el, field, keys] of [[$("patternPicker"), "pattern", Object.keys(W.PATTERNS)]]) {
+    el.addEventListener("click", e => {
+      const b = e.target.closest("[data-k]");
+      if (!b || !draft) return;
+      draft.appearance[field] = b.dataset.k;
+      renderLook(); updateDirty();
+    });
+    el.addEventListener("keydown", e => {
+      if (!["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp"].includes(e.key) || !draft || !e.target.closest("[data-k]")) return;
+      e.preventDefault();
+      const shown = [...el.querySelectorAll("[data-k]")].filter(b => b.offsetParent).map(b => b.dataset.k);
+      const list = shown.length ? shown : keys, i = list.indexOf(draft.appearance[field]);
+      draft.appearance[field] = list[(i + (e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : -1) + list.length) % list.length];
+      renderLook(); updateDirty();
+      el.querySelector(`[data-k="${draft.appearance[field]}"]`)?.focus();
+    });
+  }
   buildPicker($("ribbonPicker"), Object.entries(W.RIBBONS), "ribbon", "ribbon");
 
-  /* pattern colour: only the colours that suit the current paper (+ the chosen one, if it doesn't) */
-  let inkKeys = [];
+  /* pattern colour: any of them, the paper's own colour too (tone on tone, its sheen makes it show) */
+  const INK_ORDER = ["paper", "white", "cream", "gold", "silver", "bronze", "red", "pink", "green", "mint", "sky", "navy", "lilac", "brown", "black"];
+  let inkKeys = [], inkPaper = "";
   function buildInks() {
     const a = draft.appearance;
-    const keys = [...W.PAPERS[a.paper].inks];
-    if (a.patternColor && !keys.includes(a.patternColor)) keys.push(a.patternColor);
-    if (keys.join() === inkKeys.join()) return;
-    inkKeys = keys;
-    $("inkPicker").innerHTML = keys.map(k =>
-      `<button type="button" class="sw ink" role="radio" data-k="${k}" aria-label="${esc(W.INKS[k].name)}" title="${esc(W.INKS[k].name)}" style="--ink:rgb(${W.INKS[k].rgb})"></button>`).join("");
+    if (inkPaper === a.paper && inkKeys.length) return;
+    inkPaper = a.paper;
+    const sug = W.PAPERS[a.paper].inks;
+    inkKeys = INK_ORDER.filter(k => W.INKS[k]);
+    $("inkPicker").innerHTML = inkKeys.map(k =>
+      `<button type="button" class="sw ink${k === "paper" ? " tone" : ""}${sug.includes(k) ? " fits" : ""}" role="radio" data-k="${k}" aria-label="${esc(W.INKS[k].name)}" title="${esc(W.INKS[k].name)}${sug.includes(k) ? " · sedí k papíru" : ""}" style="--ink:rgb(${W.inkRgb(k, a.paper)})"></button>`).join("");
   }
   $("inkPicker").addEventListener("click", e => {
     const b = e.target.closest("[data-k]");
@@ -762,8 +827,8 @@ import "./themes.js";
 
   /* bow + decoration */
   $("bowPicker").innerHTML = Object.entries(W.BOWS).map(([k, v]) => `<button type="button" class="chip-pick" role="radio" data-k="${k}">${esc(v.name)}</button>`).join("");
-  $("decoPicker").innerHTML = Object.entries(W.DECOS).map(([k, v]) =>
-    `<button type="button" class="deco-sw" role="radio" data-k="${k}" aria-label="${esc(v.name)}" title="${esc(v.name)}">${W.DECO_SVG[k] || `<svg viewBox="0 0 100 70" aria-hidden="true"><path d="M30 20l40 30M70 20L30 50" stroke="currentColor" stroke-width="3" stroke-linecap="round" opacity=".45"/></svg>`}</button>`).join("");
+  grouped($("decoPicker"), W.DECOS, "deco-pick", ([k, v]) =>
+    `<button type="button" class="deco-sw" role="radio" data-k="${k}" aria-label="${esc(v.name)}" title="${esc(v.name)}">${W.DECO_SVG[k] || `<svg viewBox="0 0 100 70" aria-hidden="true"><path d="M30 20l40 30M70 20L30 50" stroke="currentColor" stroke-width="3" stroke-linecap="round" opacity=".45"/></svg>`}</button>`);
   for (const [id, field] of [["bowPicker", "bow"], ["decoPicker", "deco"]]) {
     const el = $(id), keys = Object.keys(field === "bow" ? W.BOWS : W.DECOS);
     el.addEventListener("click", e => {
@@ -774,10 +839,11 @@ import "./themes.js";
       if (!reduce && field !== "bow") { lookGift.classList.remove("pop"); void lookGift.offsetWidth; lookGift.classList.add("pop"); }
     });
     el.addEventListener("keydown", e => {
-      if (!["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp"].includes(e.key) || !draft) return;
+      if (!["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp"].includes(e.key) || !draft || !e.target.closest("[data-k]")) return;
       e.preventDefault();
-      const i = keys.indexOf(draft.appearance[field]);
-      draft.appearance[field] = keys[(i + (e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : -1) + keys.length) % keys.length];
+      const shown = [...el.querySelectorAll("[data-k]")].filter(b => b.offsetParent).map(b => b.dataset.k);
+      const list = shown.length ? shown : keys, i = list.indexOf(draft.appearance[field]);
+      draft.appearance[field] = list[(i + (e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : -1) + list.length) % list.length];
       renderLook(); updateDirty();
       el.querySelector(`[data-k="${draft.appearance[field]}"]`)?.focus();
     });
@@ -813,6 +879,8 @@ import "./themes.js";
     mark($("stylePicker"), a.ribbonStyle);
     mark($("bowPicker"), a.bow);
     mark($("decoPicker"), a.deco);
+    arrangeGroups($("patternPicker"), W.PATTERNS[a.pattern].g);
+    arrangeGroups($("decoPicker"), W.DECOS[a.deco].g);
     $("paperName").textContent = W.PAPERS[a.paper].name;
     $("patternName").textContent = W.PATTERNS[a.pattern].name;
     $("ribbonName").textContent = W.RIBBONS[a.ribbon].name;
@@ -1224,19 +1292,22 @@ import "./themes.js";
   }
 
   /* ---------- save / discard / create / delete ---------- */
-  async function save() {
-    if (!draft || saving || !isDirty()) return;
-    if (Object.values(uploads).some(u => !u.error)) { toast("Počkej, až se PDF nahraje.", true); return; }
-    if (photoUpload && !photoUpload.error) { toast("Počkej, až se fotka nahraje.", true); return; }
+  /** checks the draft before it goes to the server; false = told the user what's missing */
+  function readyToSend() {
+    if (Object.values(uploads).some(u => !u.error)) { toast("Počkej, až se PDF nahraje.", true); return false; }
+    if (photoUpload && !photoUpload.error) { toast("Počkej, až se fotka nahraje.", true); return false; }
     if (pw.on && !cur.hasPassword && !pw.value) {
       $("fPw").classList.add("invalid");
       $("fPw").focus();
       $("fPw").scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "center" });
       toast("Zadej heslo, nebo ochranu heslem vypni.", true);
-      return;
+      return false;
     }
-    if (!draft.anytime && isNaN(Date.parse(draft.openAt))) { toast("Doplň datum a čas odemčení.", true); $("fOpenAt").focus(); return; }
-
+    if (!draft.anytime && isNaN(Date.parse(draft.openAt))) { toast("Doplň datum a čas odemčení.", true); $("fOpenAt").focus(); return false; }
+    return true;
+  }
+  /** the PUT body for the draft; newPw = the password typed in, if any */
+  function draftBody() {
     const body = {
       title: draft.title.trim() || "Dárek",
       showTitle: draft.showTitle,
@@ -1255,6 +1326,13 @@ import "./themes.js";
     let newPw = null;
     if (!pw.on && cur.hasPassword) body.password = null;
     if (pw.on && pw.value) { newPw = normalizePassword(pw.value); body.password = newPw; }
+    return { body, newPw };
+  }
+
+  async function save() {
+    if (!draft || saving || !isDirty()) return;
+    if (!readyToSend()) return;
+    const { body, newPw } = draftBody();
 
     const movedTo = draft.theme !== TH.keyOf(cur.theme) ? draft.theme : null;   // the box was moved to another occasion
     saving = true; updateDirty();
@@ -1265,7 +1343,7 @@ import "./themes.js";
       saving = false;
       setCurrent(g);
       await loadList();
-      if (movedTo && movedTo !== theme) applyTheme(movedTo, { save: true });   // the user moved it: follow it
+      if (movedTo && filter !== "all" && movedTo !== filter) setFilter(movedTo);   // keep the box in sight
       toast("Uloženo");
     } catch (err) {
       saving = false; updateDirty();
@@ -1274,8 +1352,87 @@ import "./themes.js";
   }
 
   $("save").addEventListener("click", save);
+
+  /* duplicate: a copy with a new code opens right away; unsaved edits move over to the copy */
+  async function duplicate() {
+    if (!cur || saving) return;
+    const dirty = isDirty();
+    if (dirty && !readyToSend()) return;
+    if (!(await confirmDialog(dirty ? {
+      title: "Duplikovat i s neuloženými změnami?",
+      text: `Kopie dostane všechno, co máš teď rozpracované. „${cur.title}“ zůstane tak, jak byl naposledy uložený, a neuložené změny se v něm neuloží.`,
+      ok: "Duplikovat se změnami"
+    } : {
+      title: `Duplikovat „${cur.title}“?`,
+      text: "Vznikne kopie s novým kódem a stejným obsahem, vzhledem i heslem. E-mail obdarovaného a statistiky se nepřenesou.",
+      ok: "Duplikovat"
+    }))) return;
+    saving = true; updateDirty();
+    const from = cur.code;
+    let copy = null;
+    try {
+      copy = await api(`admin/gifts/${encodeURIComponent(from)}/duplicate`, { method: "POST" });
+      let g = copy;
+      if (dirty) {
+        const { body, newPw } = draftBody();
+        body.title = `${body.title} (kopie)`.slice(0, 120);
+        body.recipientEmail = "";
+        g = await api(`admin/gifts/${encodeURIComponent(copy.code)}`, { method: "PUT", body });
+        if (newPw) fresh[g.code] = newPw;
+        else if (body.password !== null && fresh[from]) fresh[g.code] = fresh[from];
+      } else if (fresh[from]) fresh[g.code] = fresh[from];
+      saving = false;
+      setCurrent(g);
+      await loadList();
+      if (filter !== "all" && TH.keyOf(g.theme) !== filter) setFilter(g.theme);
+      $("layout").classList.add("show-editor");
+      scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
+      const ti = $("fTitle");
+      ti.focus({ preventScroll: true }); ti.select();
+      toast(`Kopie je připravená. Kód ${g.code}`);
+    } catch (err) {
+      saving = false; updateDirty();
+      // the edits didn't make it into the copy: don't leave a half-made copy behind
+      if (copy) { try { await api(`admin/gifts/${encodeURIComponent(copy.code)}`, { method: "DELETE" }); } catch { /* ignore */ } }
+      if (err.status !== 401) toast(err.message, true);
+    }
+  }
+  $("dupGift").addEventListener("click", duplicate);
   $("discard").addEventListener("click", async () => {
-    if (await confirmDialog({ title: "Zahodit změny?", text: "Box se vrátí do posledního uloženého stavu.", ok: "Zahodit" })) setCurrent(cur);
+    if (await confirmDialog({ title: "Vrátit neuložené změny?", text: "Box se vrátí do stavu z posledního uložení. Smazaný nebude.", ok: "Vrátit změny" })) { setCurrent(cur); toast("Změny vráceny"); }
+  });
+
+  /* ---------- share / send ---------- */
+  const giftUrl = () => appBase() + cur.code;
+  const SHARE_LEAD = { christmas: "Ježíšek ti nechal dárek 🎄", birthday: "Mám pro tebe dárek k narozeninám 🎂", wedding: "Máme pro vás svatební dar 💍", general: "Mám pro tebe dárek 🎁" };
+  function shareText() {
+    const pwTxt = cur.hasPassword ? (fresh[cur.code] ? ` Heslo: ${fresh[cur.code]}` : " Heslo ti řeknu zvlášť.") : "";
+    return `${SHARE_LEAD[TH.keyOf(cur.theme)]} Rozbalíš ho tady: ${giftUrl()} (kód ${cur.code}).${pwTxt}`;
+  }
+  function openShare() {
+    if (!cur) return;
+    const st = statusOf(cur);
+    $("shareCode").textContent = cur.code;
+    $("shareUrl").textContent = giftUrl();
+    $("shareUnsaved").hidden = !isDirty();
+    $("sharePw").textContent = !cur.hasPassword ? "Dárek je bez hesla: stačí odkaz nebo kód."
+      : fresh[cur.code] ? `Heslo: ${fresh[cur.code]} (pošli ho třeba zvlášť, nebo napiš do přáníčka).`
+      : "Dárek je chráněný heslem. To mu řekni zvlášť, v odkazu není.";
+    $("shareWhen").textContent = st.ok ? "Dárek už jde rozbalit." : `${st.text}. Do té doby uvidí jen odpočet.`;
+    $("shareNative").hidden = !navigator.share;
+    $("sharePreview").href = `${giftUrl()}?preview=1`;
+    $("shareMail").href = `mailto:${encodeURIComponent(cur.recipientEmail || "")}?subject=${encodeURIComponent("Mám pro tebe dárek")}&body=${encodeURIComponent(shareText())}`;
+    $("shareDlg").showModal();
+  }
+  $("shareBtn").addEventListener("click", openShare);
+  $("shareInline").addEventListener("click", openShare);
+  $("shareClose").addEventListener("click", () => $("shareDlg").close());
+  $("shareDlg").addEventListener("click", e => { if (e.target === $("shareDlg")) $("shareDlg").close(); });
+  $("shareCopyLink").addEventListener("click", async () => { if (await copy(giftUrl())) toast("Odkaz zkopírován"); });
+  $("shareCopyText").addEventListener("click", async () => { if (await copy(shareText())) toast("Zkopírováno i se vzkazem"); });
+  $("shareNative").addEventListener("click", async () => {
+    try { await navigator.share({ title: cur.showTitle ? cur.title : "Dárek", text: shareText(), url: giftUrl() }); }
+    catch (err) { if (err?.name !== "AbortError") toast("Sdílení se nepovedlo, zkopíruj odkaz.", true); }
   });
   document.addEventListener("keydown", e => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s" && !$("editor").hidden) { e.preventDefault(); save(); }
@@ -1287,9 +1444,10 @@ import "./themes.js";
     try {
       // other occasions than Christmas: tomorrow at 18:00 as a starting point
       const t = new Date(now()); t.setDate(t.getDate() + 1); t.setHours(18, 0, 0, 0);
+      const th = restTheme();
       const g = await api("admin/gifts", { method: "POST", body: {
-        title: "Nový dárek", theme, appearance: TT.appearance,
-        ...(theme === "christmas" ? {} : { openAt: t.toISOString() })
+        title: "Nový dárek", theme: th, appearance: TH.get(th).appearance,
+        ...(th === "christmas" ? {} : { openAt: t.toISOString() })
       } });
       await loadList();
       setCurrent(g);

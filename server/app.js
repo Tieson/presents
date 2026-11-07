@@ -48,12 +48,12 @@ export function defaultOpenAt(now = new Date()) {
 
 /* ---------- appearance & reveal (whitelists shared with web/assets/wrap.js) ---------- */
 export const PAPERS = ["burgundy", "scarlet", "emerald", "fir", "midnight", "plum", "charcoal", "ivory", "frost", "champagne", "gold", "blush", "silver", "kraft"];
-export const PATTERNS = ["plain", "stripes", "dots", "tartan", "stars", "snow", "trees", "baubles", "holly", "candy", "gingerbread", "deer", "hearts"];
-export const INKS = ["white", "cream", "gold", "silver", "bronze", "red", "green", "navy", "brown", "black"];
+export const PATTERNS = ["plain", "stripes", "dots", "tartan", "stars", "snow", "trees", "baubles", "holly", "candy", "gingerbread", "deer", "hearts", "chevron", "waves", "confetti", "balloons", "cupcakes", "streamers", "rings", "flowers", "lace"];
+export const INKS = ["white", "cream", "gold", "silver", "bronze", "red", "green", "navy", "brown", "black", "paper", "pink", "sky", "mint", "lilac"];
 export const RIBBONS = ["gold", "silver", "copper", "red", "burgundy", "pink", "green", "navy", "white", "black"];
 export const RIBBON_STYLES = ["cross", "single", "none"];
 export const BOWS = ["classic", "double", "rosette", "small", "none"];
-export const DECOS = ["none", "holly", "pine", "candy", "bauble", "star", "bells", "orange"];
+export const DECOS = ["none", "holly", "pine", "candy", "bauble", "star", "bells", "orange", "tag", "balloons", "candle", "partyhat", "rings", "rose", "heart"];
 export const PHOTO_FRAMES = ["polaroid", "postcard"];
 export const REVEALS = ["all", "sequential", "choice"];
 export const THEMES = ["christmas", "birthday", "wedding", "general"];   // occasion of a box (and the workshop's current one)
@@ -417,6 +417,9 @@ export function createApp({
   /** before/after: lists of { id, size } still referenced by a box */
   async function removeOrphanFiles(w, before, after) {
     const keep = new Set(after.map(f => f.id));
+    if (before.every(f => keep.has(f.id))) return;
+    // a duplicated box shares its PDFs and photo: only delete what no box of the workshop uses any more
+    for (const o of await storage.listGiftsByOwner(w.id)) for (const f of filesOf(o)) keep.add(f.id);
     let freed = 0;
     for (const f of before) {
       if (!keep.has(f.id)) {
@@ -447,7 +450,8 @@ export function createApp({
 
       if (seg.length === 2 && method === "GET") {
         // ?poll=1: the waiting page checking for a ring – not a new visit
-        if (!new URL(req.url).searchParams.has("poll") && !(await isOwner())) await track(g, "view");
+        const owner = await isOwner();
+        if (!new URL(req.url).searchParams.has("poll") && !owner) await track(g, "view");
         return json({
           code: g.code,
           title: g.showTitle ? g.title : null,
@@ -457,6 +461,7 @@ export function createApp({
           locked: isLocked(g),
           openAt: g.anytime ? null : g.openAt,
           ringAt: g.ringAt || null,
+          owner,                                   // only the signed-in creator may preview a locked box
           serverNow: new Date().toISOString()
         });
       }
@@ -465,6 +470,7 @@ export function createApp({
       if (seg.length === 3 && seg[2] === "open" && method === "POST") {
         const body = await readJson(req);
         const preview = body.preview === true && await isOwner();
+        if (body.preview === true && !preview) return fail(403, "not_owner", "Náhled může zobrazit jen autor dárku přihlášený ve své dílně.");
         if (!preview) {
           const viaToken = typeof body.token === "string" && checkToken(SECRET, giftScope(g), body.token);
           if (g.passwordHash && !viaToken && !verifyPassword(normalizePassword(body.password), g.passwordHash)) {
@@ -476,7 +482,8 @@ export function createApp({
           }
         }
         if (!preview && !(await isOwner())) await track(g, "open");
-        return json({ gift: publicGift(g), token: signToken(SECRET, giftScope(g), GIFT_TTL), preview });
+        // a preview hands out no token: it would let the creator's browser skip the password later
+        return json({ gift: publicGift(g), token: preview ? null : signToken(SECRET, giftScope(g), GIFT_TTL), preview });
       }
 
       // the recipient's browser wants a system notification when the box unlocks or the creator rings
@@ -784,6 +791,26 @@ export function createApp({
           await dropGiftExtras(g.code);
           await removeOrphanFiles(w, filesOf(g), []);
           return json({ ok: true });
+        }
+
+        // a copy of the saved box under a new code (shares the files; stats, schedule and recipient start fresh)
+        if (seg.length === 4 && seg[3] === "duplicate" && method === "POST") {
+          if (await storage.countGiftsByOwner(w.id) >= maxGifts) {
+            return fail(409, "limit", `V jedné dílně může být nejvýš ${maxGifts} boxů.`);
+          }
+          const now = new Date().toISOString();
+          const copy = {
+            ...g,
+            code: await uniqueCode(),
+            title: `${g.title} (kopie)`.slice(0, 120),
+            recipientEmail: "", notifiedAt: null, ringAt: null,
+            items: g.items.map(i => ({ ...i, file: i.file ? { ...i.file } : null })),
+            photo: g.photo ? { ...g.photo, file: { ...g.photo.file } } : null,
+            createdAt: now, updatedAt: now
+          };
+          await storage.putGift(copy);
+          const saved = await syncDue(null, copy);
+          return json({ ...adminView(saved), stats: await storage.getStats(saved.code) }, 201);
         }
 
         if (seg.length === 4 && seg[3] === "regenerate-code" && method === "POST") {

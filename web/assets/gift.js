@@ -46,7 +46,8 @@ import "./themes.js";
   const states = { hub: $("hubState"), code: $("codeForm"), loading: $("loadingState"), locked: $("lockedState"), open: $("openForm") };
 
   const params = new URLSearchParams(location.search);
-  const preview = params.has("preview");
+  const wantsPreview = params.has("preview");
+  let preview = false;      // ?preview=1 counts only for the signed-in creator (the server says so)
   let code = readCode();
   let meta = null, offset = 0, fails = 0, busy = false, tick = null;
 
@@ -349,6 +350,7 @@ import "./themes.js";
     try {
       meta = await api(`gifts/${code}`);
       offset = Date.parse(meta.serverNow) - Date.now();
+      preview = wantsPreview && meta.owner === true;
       applyTheme(meta.theme);
       W.apply(gift, meta.appearance);
       revealTheme();
@@ -402,7 +404,7 @@ import "./themes.js";
     say("");
     try {
       const res = await api(`gifts/${code}/open`, { method: "POST", body });
-      store(key("t"), res.token);
+      if (res.token) store(key("t"), res.token);
       openSequence(res.gift, res.token, res.preview);
     } catch (err) {
       busy = false;
