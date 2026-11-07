@@ -75,8 +75,10 @@ Dílny se zakládají na `https://<projekt>.vercel.app/dilna`.
 
 ```bash
 npm ci
-npm run build:php        # → build/php/
+APP_URL=https://darky.example.cz npm run build:php        # → build/php/
 ```
+
+`APP_URL` při sestavení doplní plnou adresu náhledového obrázku pro sdílení odkazu (Messenger, WhatsApp, Facebook). Bez něj zůstane relativní. Na Vercelu se vezme jeho produkční doména sama.
 
 1. Obsah `build/php/` (včetně `.htaccess`) nahraj přes FTP do webrootu nebo podsložky.
 2. Na serveru zkopíruj `config.sample.php` → `config.php` a vyplň `APP_SECRET` (případně `SIGNUP_CODE`).
