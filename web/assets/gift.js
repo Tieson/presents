@@ -483,7 +483,9 @@ import "./themes.js";
     const chosen = store(key("m"));
     opened = {
       g, token, preview: isPreview,
-      mode: g.reveal === "choice" ? (chosen === "all" || chosen === "sequential" ? chosen : null) : (g.reveal || "all"),
+      // nothing to unwrap one by one (no items, or just one): no choice to make, show it all
+      mode: g.items.length < 2 && g.reveal === "choice" ? "all"
+        : g.reveal === "choice" ? (chosen === "all" || chosen === "sequential" ? chosen : null) : (g.reveal || "all"),
       view: "box"
     };
     if (reduce) { present.hidden = true; enterOpened(); busy = false; return; }
@@ -535,8 +537,8 @@ import "./themes.js";
         ${g.photo && (all || done) ? photoHtml(g, all ? .35 : 0) : ""}
         ${shown.length
           ? `<ol class="items">${shown.map((it, i) => itemHtml(it, i, all ? { delay: .45 + i * .16 } : { cls: i === fresh ? "flash" : "seen" })).join("")}</ol>`
-          : (mode ? `<p class="reveal-empty">Zatím nic. Rozbal první krabičku nahoře.</p>` : "")}
-        ${g.signature && done && mode ? `<p class="sign">${esc(g.signature)}</p>` : ""}
+          : (!all && mode ? `<p class="reveal-empty">Zatím nic. Rozbal první krabičku nahoře.</p>` : "")}
+        ${g.signature && done ? `<p class="sign">${esc(g.signature)}</p>` : ""}
         <button class="link-btn" id="rewrap" type="button">Zabalit znovu</button>
       </article>
       ${done && !opened.preview ? ctaHtml() : ""}`;
@@ -548,9 +550,10 @@ import "./themes.js";
   function ctaHtml() {
     const touch = matchMedia("(pointer: coarse)").matches;
     const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+    const what = opened?.g.items.some(i => i.file) ? "k poukazům" : "k dárku";
     const keep = touch
-      ? "Ať se k poukazům kdykoli vrátíš, ulož si tuhle stránku do záložek nebo na plochu."
-      : `Ať se k poukazům kdykoli vrátíš, ulož si tuhle stránku do záložek (<kbd>${mac ? "⌘" : "Ctrl"}</kbd> + <kbd>D</kbd>).`;
+      ? `Ať se ${what} kdykoli vrátíš, ulož si tuhle stránku do záložek nebo na plochu.`
+      : `Ať se ${what} kdykoli vrátíš, ulož si tuhle stránku do záložek (<kbd>${mac ? "⌘" : "Ctrl"}</kbd> + <kbd>D</kbd>).`;
     return `<aside class="cta" aria-labelledby="ctaTitle">
       <p class="eyebrow ruled">${esc(T.workshop.join(" "))}</p>
       <h3 id="ctaTitle">Chceš taky někoho <em>obdarovat?</em></h3>
