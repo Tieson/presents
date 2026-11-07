@@ -161,6 +161,15 @@ button.gift { cursor: pointer; }
 .gift.deco-star .deco { width: 24%; bottom: 118%; z-index: 3; }
 .gift.bow-none.deco-star .deco { bottom: 70%; width: 36%; }
 .gift.bow-none.deco-holly .deco, .gift.bow-none.deco-pine .deco { left: 50%; bottom: 20%; width: 96%; transform: translateX(-50%); }
+.gift.deco-tag .deco { left: 82%; width: 46%; bottom: -170%; z-index: 3; transform: translateX(-50%) rotate(6deg); }
+.gift.deco-balloons .deco { width: 78%; bottom: 100%; z-index: 0; }
+.gift.deco-candle .deco { left: 22%; width: 50%; bottom: 40%; transform: translateX(-50%) rotate(-6deg); }
+.gift.deco-partyhat .deco { width: 46%; bottom: 112%; z-index: 3; transform: translateX(-50%) rotate(8deg); }
+.gift.deco-rings .deco { left: 20%; width: 52%; bottom: 24%; transform: translateX(-50%) rotate(-8deg); }
+.gift.deco-rose .deco { left: 18%; width: 62%; bottom: 10%; transform: translateX(-50%) rotate(-12deg); }
+.gift.deco-heart .deco { left: 21%; width: 40%; bottom: 26%; transform: translateX(-50%) rotate(-10deg); }
+.gift.bow-none.deco-balloons .deco { bottom: 70%; }
+.gift.bow-none.deco-partyhat .deco { bottom: 74%; width: 40%; }
 .gift .bow { z-index: 1; }
 
 /* paper and ribbon colours glide when the box changes (occasion switch, picking a paper in the workshop) */

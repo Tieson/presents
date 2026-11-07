@@ -133,12 +133,12 @@ function default_open_at(): string {
 }
 /* appearance & reveal – whitelists shared with web/assets/wrap.js */
 const PAPERS = ['burgundy', 'scarlet', 'emerald', 'fir', 'midnight', 'plum', 'charcoal', 'ivory', 'frost', 'champagne', 'gold', 'blush', 'silver', 'kraft'];
-const PATTERNS = ['plain', 'stripes', 'dots', 'tartan', 'stars', 'snow', 'trees', 'baubles', 'holly', 'candy', 'gingerbread', 'deer', 'hearts'];
-const INKS = ['white', 'cream', 'gold', 'silver', 'bronze', 'red', 'green', 'navy', 'brown', 'black'];
+const PATTERNS = ['plain', 'stripes', 'dots', 'tartan', 'stars', 'snow', 'trees', 'baubles', 'holly', 'candy', 'gingerbread', 'deer', 'hearts', 'chevron', 'waves', 'confetti', 'balloons', 'cupcakes', 'streamers', 'rings', 'flowers', 'lace'];
+const INKS = ['white', 'cream', 'gold', 'silver', 'bronze', 'red', 'green', 'navy', 'brown', 'black', 'paper', 'pink', 'sky', 'mint', 'lilac'];
 const RIBBONS = ['gold', 'silver', 'copper', 'red', 'burgundy', 'pink', 'green', 'navy', 'white', 'black'];
 const RIBBON_STYLES = ['cross', 'single', 'none'];
 const BOWS = ['classic', 'double', 'rosette', 'small', 'none'];
-const DECOS = ['none', 'holly', 'pine', 'candy', 'bauble', 'star', 'bells', 'orange'];
+const DECOS = ['none', 'holly', 'pine', 'candy', 'bauble', 'star', 'bells', 'orange', 'tag', 'balloons', 'candle', 'partyhat', 'rings', 'rose', 'heart'];
 const PHOTO_FRAMES = ['polaroid', 'postcard'];
 const REVEALS = ['all', 'sequential', 'choice'];
 const THEMES = ['christmas', 'birthday', 'wedding', 'general'];   // occasion of a box (and the workshop's current one)
@@ -817,6 +817,10 @@ function unique_code(): string {
 function remove_orphan_files(string $owner, array $before, array $after): void {
     $keep = [];
     foreach ($after as $f) $keep[$f['id']] = true;
+    $gone = array_filter($before, function ($f) use ($keep) { return !isset($keep[$f['id']]); });
+    if (!$gone) return;
+    // a duplicated box shares its PDFs and photo: only delete what no box of the workshop uses any more
+    foreach (gifts_by_owner($owner) as $o) foreach (files_of($o) as $f) $keep[$f['id']] = true;
     $freed = 0;
     foreach ($before as $f) {
         if (!isset($keep[$f['id']])) { delete_file((string) $f['id']); $freed += (int) ($f['size'] ?? 0); }
@@ -888,7 +892,8 @@ try {
 
         if (count($seg) === 2 && $method === 'GET') {
             // ?poll=1: the waiting page checking for a ring – not a new visit
-            if (!isset($_GET['poll']) && !$isOwner()) track($g, 'view');
+            $owner = (bool)$isOwner();
+            if (!isset($_GET['poll']) && !$owner) track($g, 'view');
             send_json([
                 'code' => $g['code'],
                 'title' => $g['showTitle'] ? $g['title'] : null,
@@ -898,12 +903,14 @@ try {
                 'locked' => is_locked($g),
                 'openAt' => $g['anytime'] ? null : $g['openAt'],
                 'ringAt' => $g['ringAt'] ?? null,
+                'owner' => $owner,
                 'serverNow' => now_iso(),
             ]);
         }
         if (count($seg) === 3 && $seg[2] === 'open' && $method === 'POST') {
             $b = body_json();
             $preview = ($b['preview'] ?? false) === true && $isOwner();
+            if (($b['preview'] ?? false) === true && !$preview) fail(403, 'not_owner', 'Náhled může zobrazit jen autor dárku přihlášený ve své dílně.');
             if (!$preview) {
                 $viaToken = is_string($b['token'] ?? null) && check_token($SECRET, gift_scope($g), $b['token']);
                 if (!empty($g['passwordHash']) && !$viaToken && !verify_password(normalize_password($b['password'] ?? ''), $g['passwordHash'])) {
@@ -913,7 +920,7 @@ try {
                 if (is_locked($g)) fail(423, 'locked', 'Dárek ještě nejde rozbalit.', ['openAt' => $g['openAt'], 'serverNow' => now_iso()]);
             }
             if (!$preview && !$isOwner()) track($g, 'open');
-            send_json(['gift' => public_gift($g), 'token' => sign_token($SECRET, gift_scope($g), GIFT_TTL), 'preview' => $preview]);
+            send_json(['gift' => public_gift($g), 'token' => $preview ? null : sign_token($SECRET, gift_scope($g), GIFT_TTL), 'preview' => $preview]);
         }
         if (count($seg) === 3 && $seg[2] === 'subscribe' && ($method === 'POST' || $method === 'DELETE')) {
             $ep = clean_endpoint(body_json()['endpoint'] ?? null);
@@ -1195,6 +1202,21 @@ try {
                 drop_gift_extras($g['code']);
                 remove_orphan_files($w['id'], files_of($g), []);
                 send_json(['ok' => true]);
+            }
+
+            // a copy of the saved box under a new code (shares the files; stats, schedule and recipient start fresh)
+            if (count($seg) === 4 && $seg[3] === 'duplicate' && $method === 'POST') {
+                if (count(gifts_by_owner($w['id'])) >= $MAX_GIFTS) fail(409, 'limit', "V jedné dílně může být nejvýš $MAX_GIFTS boxů.");
+                $now = now_iso();
+                $copy = array_merge($g, [
+                    'code' => unique_code(),
+                    'title' => mb_substr($g['title'] . ' (kopie)', 0, 120, 'UTF-8'),
+                    'recipientEmail' => '', 'notifiedAt' => null, 'ringAt' => null,
+                    'createdAt' => $now, 'updatedAt' => $now,
+                ]);
+                put_gift($copy);
+                $saved = sync_due(null, $copy);
+                send_json(admin_view($saved) + ['stats' => get_stats($saved['code'])], 201);
             }
 
             if (count($seg) === 4 && $seg[3] === 'regenerate-code' && $method === 'POST') {
