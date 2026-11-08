@@ -34,11 +34,26 @@ function devApi() {
   };
 }
 
+/**
+ * Link previews (Messenger, WhatsApp, Facebook…) want an absolute og:image URL.
+ * The site's address comes from APP_URL, or on Vercel from its production domain;
+ * without either the image stays relative (most apps still resolve it).
+ */
+function sharePreview() {
+  const site = (process.env.APP_URL || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "")).replace(/\/+$/, "");
+  return {
+    name: "xd-share-preview",
+    transformIndexHtml(html) {
+      return html.replaceAll("%SITE%/", site ? `${site}/` : "./");
+    }
+  };
+}
+
 export default defineConfig({
   root: web,
   base: "./",                 // relative asset URLs → works in a sub-folder on PHP hosting too
   appType: "mpa",
-  plugins: [devApi()],
+  plugins: [devApi(), sharePreview()],
   build: {
     outDir: resolve(import.meta.dirname, process.env.XD_OUT || "dist"),
     emptyOutDir: true,
