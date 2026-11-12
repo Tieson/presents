@@ -127,6 +127,49 @@ export async function run(base) {
   r = await A("GET", "admin/files/" + img); ok(r.s === 404, "removed photo deleted");
   r = await A("GET", "workshop"); ok(r.d.workshop.usedBytes === pdf.length, "its space freed");
 
+  /* ---------- voice / video message from the creator ---------- */
+  const webm = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(600, 7)]);
+  r = await A("POST", "admin/files", webm, { headers: { "X-Media-Kind": "audio", "X-Media-Duration": "12.34" } });
+  const clipId = r.d.id;
+  ok(r.s === 201 && r.d.type === "audio/webm" && r.d.duration === 12.3, "upload a voice message (type from the bytes + hint)");
+  r = await A("POST", "admin/files", webm, { headers: { "X-Media-Kind": "video", "X-Media-Duration": "999" } });
+  const vidId = r.d.id;
+  ok(r.s === 201 && r.d.type === "video/webm" && r.d.duration === 30, "video message, duration capped at 30 s");
+  r = await B("PUT", "admin/gifts/" + codeB, { title: "B", anytime: true, items: [], clip: { file: { id: clipId } } }); ok(r.d.clip === null, "B can't attach A's recording");
+  r = await A("PUT", "admin/gifts/" + code, { title: "T", anytime: true, items: items1, clip: { file: { id: fid } } }); ok(r.d.clip === null, "a PDF isn't a message");
+  r = await A("PUT", "admin/gifts/" + code, { title: "T", anytime: true, items: items1, clip: { file: { id: clipId } } });
+  ok(r.d.clip?.kind === "audio" && r.d.clip.duration === 12.3, "attach the voice message");
+  r = await anon("POST", `gifts/${code}/open`, { password: "vanoce" }, { csrf: false }); const ctok = r.d.token;
+  ok(r.d.gift.clip?.kind === "audio" && !r.d.gift.clip.file, "recipient learns there's a message (no file id)");
+  r = await anon("GET", `gifts/${code}/clip`); ok(r.s === 401, "message needs the token");
+  r = await anon("GET", `gifts/${code}/clip?t=${encodeURIComponent(ctok)}`);
+  ok(r.s === 200 && r.h.get("content-type") === "audio/webm" && Buffer.from(r.d).equals(webm) && /sandbox/.test(r.h.get("content-security-policy") || ""), "message plays for the recipient");
+  r = await A("PUT", "admin/gifts/" + code, { title: "T", anytime: true, items: items1, clip: { file: { id: vidId } } });
+  ok(r.d.clip?.kind === "video", "swap it for the video");
+  r = await A("GET", "admin/files/" + clipId); ok(r.s === 404, "the replaced recording is deleted");
+  r = await A("PUT", "admin/gifts/" + code, { title: "T", anytime: true, items: items1, clip: null }); ok(r.d.clip === null, "remove the message");
+  r = await A("GET", "workshop"); ok(r.d.workshop.usedBytes === pdf.length, "its space freed");
+
+  /* ---------- the recipient's unwrapping video ---------- */
+  r = await anon("GET", "gifts/" + code); ok(r.d.askReaction === null, "no reaction asked by default");
+  r = await anon("POST", `gifts/${code}/reaction`, webm, { csrf: false, headers: { "X-Gift-Token": ctok } }); ok(r.s === 403, "reaction refused when the creator didn't ask");
+  r = await A("PUT", "admin/gifts/" + code, { title: "T", anytime: true, items: items1, askReaction: true }); ok(r.d.askReaction === true, "creator asks for a reaction");
+  r = await anon("GET", "gifts/" + code); ok(r.d.askReaction?.seconds === 60 && r.d.askReaction.bytes > 0, "recipient is asked before unwrapping");
+  r = await anon("POST", `gifts/${code}/reaction`, webm, { csrf: false }); ok(r.s === 401, "reaction needs the unwrap token");
+  r = await anon("POST", `gifts/${code}/reaction`, pdf, { csrf: false, headers: { "X-Gift-Token": ctok } }); ok(r.s === 415, "only a video is accepted");
+  r = await anon("POST", `gifts/${code}/reaction`, webm, { csrf: false, headers: { "X-Gift-Token": ctok, "X-Media-Duration": "21.5" } }); ok(r.s === 201, "recipient sends the video");
+  r = await anon("GET", "gifts/" + code); ok(r.d.askReaction === null, "…and isn't asked again");
+  r = await A("GET", "admin/gifts/" + code); ok(r.d.reaction?.duration === 21.5 && r.d.reaction.file.size === webm.length, "creator sees it on the box");
+  r = await A("GET", "admin/gifts"); ok(r.d.gifts.find(g => g.code === code)?.hasReaction === true, "…and in the list");
+  r = await A("GET", `admin/gifts/${code}/reaction`); ok(r.s === 200 && r.h.get("content-type") === "video/webm" && Buffer.from(r.d).equals(webm), "creator plays the video");
+  r = await B("GET", `admin/gifts/${code}/reaction`); ok(r.s === 404, "another workshop can't");
+  r = await anon("GET", `gifts/${code}/reaction`); ok(r.s === 404, "nor can anyone with just the code");
+  r = await A("GET", "workshop"); ok(r.d.workshop.usedBytes === pdf.length + webm.length, "the video counts into the workshop's space");
+  r = await A("PUT", "admin/gifts/" + code, { title: "T", anytime: true, items: items1 }); ok(r.d.reaction?.file, "saving the box keeps the video");
+  r = await A("DELETE", `admin/gifts/${code}/reaction`); ok(r.s === 200 && r.d.reaction === null, "creator deletes the video");
+  r = await A("GET", "workshop"); ok(r.d.workshop.usedBytes === pdf.length, "space freed");
+  r = await A("PUT", "admin/gifts/" + code, { title: "T", anytime: true, items: items1, askReaction: false });
+
   /* ---------- duplicate: shares the files, keeps the password, starts fresh ---------- */
   r = await B("POST", `admin/gifts/${code}/duplicate`); ok(r.s === 404, "B can't duplicate A's box");
   r = await A("POST", `admin/gifts/${code}/duplicate`);

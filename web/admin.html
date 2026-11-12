@@ -268,6 +268,16 @@
           <input type="file" id="photoInput" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/*" hidden>
         </section>
 
+        <!-- voice / video message -->
+        <section class="block" id="clipBlock">
+          <header class="block-head">
+            <h3>Hlasový nebo video vzkaz</h3>
+            <p>Nepovinné. Namluv nebo natoč krátký vzkaz, nejvýš <span id="clipMax">30</span> s. Obdarovaný si ho pustí po rozbalení.</p>
+          </header>
+          <div id="clipArea"></div>
+          <input type="file" id="clipInput" accept="audio/*,video/mp4,video/webm,video/quicktime" hidden>
+        </section>
+
         <!-- items -->
         <section class="block">
           <header class="block-head">
@@ -384,6 +394,13 @@
             <input id="fRecipientEmail" class="input" type="email" maxlength="200" placeholder="kata@example.cz" autocomplete="off">
             <p class="hint" id="recipientHint">V čase odemčení mu pošleme e-mail s odkazem na dárek. Heslo v e-mailu nebude.</p>
           </div>
+          <label class="toggle">
+            <input type="checkbox" id="fAskReaction">
+            <span class="switch" aria-hidden="true"></span>
+            <span>Požádat o video z rozbalování</span>
+          </label>
+          <p class="hint">Před rozbalením se obdarovaného zeptáme, jestli se chce natočit (nejvýš 60 s). Video si pak přehraje a sám rozhodne, jestli ti ho pošle.</p>
+          <div id="reactionArea" hidden></div>
           <div class="ring-row">
             <button type="button" class="ring-btn" id="ringBtn">
               <span class="ring-icon" id="ringIcon" aria-hidden="true"></span>

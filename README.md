@@ -23,6 +23,8 @@ zadá heslo a ve stanovený čas si dárek „rozbalí“. Dárky se balí v **J
   - E-mail obdarovanému **v čas odemčení** (s odkazem, bez hesla), případně hned po ručním odemčení.
   - Tlačítko **Zazvonit zvonečkem** (u narozenin „Zatroubit na frkačku“, u svatby „Cinknout skleničkou“, jinak „Zaťukat na dveře“) pošle e-mail i systémové upozornění. Kdo má dárek otevřený, tomu zazvoní přímo na stránce.
   - Obdarovaný si na čekající stránce může zapnout **upozornění v prohlížeči/systému**, tvůrce v dílně taky (přijde, když někdo dárek poprvé otevře a rozbalí). Tvůrci navíc přijde e-mail při prvním rozbalení (jde vypnout).
+- **Hlasový nebo video vzkaz:** tvůrce ho v dílně namluví, natočí (nejvýš 30 s, s odpočtem) nebo vloží hotový soubor. Obdarovaný si ho pustí po rozbalení.
+- **Video z rozbalování:** tvůrce o něj může požádat. Obdarovaný před rozbalením uvidí, co a proč se nahrává, sám zapne kameru, vidí náhled a vybere kameru (jde přepnout i během nahrávání). Nahrává se od rozbalení nejvýš 60 s. Video si pak přehraje a pošle ho, jen když chce. V dílně si ho tvůrce přehraje, stáhne nebo smaže.
 - **E-maily s odkazem do dílny (nepovinné, přes SMTP).** Po založení přijde odkaz e-mailem. V dílně ho jde poslat znovu a po výměně přijde nový. Kdo odkaz ztratí, nechá si ho poslat na uložený e-mail. Bez nastaveného SMTP se e-mail jen uloží a nic se neposílá.
 
 ## Struktura
@@ -130,6 +132,7 @@ Test: `npm test` vyzkouší e-maily proti lokálnímu SMTP serveru. Pro PHP spus
 - Dílny: tajný klíč má 192 bitů náhody. Server si ukládá jeho otisk (SHA-256) pro vyhledání a kopii šifrovanou AES-256-GCM klíčem odvozeným z `APP_SECRET`, aby šel odkaz v dílně znovu ukázat. Klíč je v části adresy za `#`, takže se neposílá na server v adrese a nezůstane v jeho logech. Po přihlášení ho stránka z adresního řádku hned odstraní.
 - Přihlášení: podepsaná HttpOnly cookie na rok. Výměnou odkazu se zneplatní všechna ostatní přihlášení. Hlavička `X-Admin` chrání proti CSRF.
 - Každá dílna vidí jen svoje boxy a PDF. Cizí box vypadá stejně jako neexistující (404).
+- Nahrávky: vzkaz i video z rozbalování se nahrávají v prohlížeči a vejdou se do limitu jednoho souboru (`MAX_UPLOAD_MB`, na Vercelu 4 MB), kvalita se podle něj nastaví sama. Kamera a mikrofon vyžadují HTTPS. Video z rozbalování přijme server jen u boxu, kde o něj tvůrce požádal, a jen od toho, kdo dárek rozbalil. Vidí ho pouze tvůrce a počítá se do místa dílny.
 - Limity na dílnu: `MAX_GIFTS` boxů (50) a `MAX_STORAGE_MB` místa na PDF (100 MB). Volitelný `SIGNUP_CODE` omezí zakládání dílen.
 - E-maily: adresa pro odkazy v e-mailu se bere jen z `APP_URL`, nikdy z hlavičky `Host`. Obnova ztraceného odkazu odpoví vždy stejně, takže nejde zjistit, které adresy mají dílnu. Jedna dílna dostane nejvýš jeden e-mail za minutu.
 - Hesla k dárkům: PBKDF2-SHA256, 210 000 iterací. Špatný pokus server zdrží o 0,6 s.

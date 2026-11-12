@@ -92,8 +92,24 @@ export function sniffType(buf) {
   if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return "image/jpeg";
   if (head.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
   if (head.subarray(0, 4).toString("latin1") === "RIFF" && head.subarray(8, 12).toString("latin1") === "WEBP") return "image/webp";
+  // sound and video: the container says nothing about what's inside, the uploader's hint picks audio/ or video/
+  if (head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3) return "media/webm";
+  if (head.subarray(4, 8).toString("latin1") === "ftyp") return "media/mp4";
+  if (head.subarray(0, 4).toString("latin1") === "OggS") return "audio/ogg";
+  if (head.subarray(0, 3).toString("latin1") === "ID3" || (head[0] === 0xff && (head[1] & 0xe0) === 0xe0)) return "audio/mpeg";
+  if (head.subarray(0, 4).toString("latin1") === "RIFF" && head.subarray(8, 12).toString("latin1") === "WAVE") return "audio/wav";
   return null;
 }
+/** sniffed type + the uploader's hint → the final media type, or null when it isn't sound/video */
+export function mediaType(sniffed, kind) {
+  if (!sniffed) return null;
+  if (sniffed.startsWith("media/")) return `${kind === "audio" ? "audio" : "video"}/${sniffed.slice(6)}`;
+  return sniffed.startsWith("audio/") ? sniffed : null;
+}
+export const CLIP_SECONDS = 30;        // the creator's voice / video message
+export const REACTION_SECONDS = 60;    // the recipient's unwrapping video
+const isMedia = meta => /^(audio|video)\//.test(fileType(meta));
+const seconds = (v, max) => { const n = Math.round(Number(v) * 10) / 10; return n > 0 ? Math.min(n, max) : null; };
 const fileType = meta => meta?.type || "application/pdf";               // files from before photos were PDFs
 const isPdf = meta => fileType(meta) === "application/pdf";
 const isImage = meta => IMAGE_TYPES.includes(fileType(meta));
@@ -103,7 +119,8 @@ function withDefaults(g) {
   if (!g) return g;
   return { ...g, appearance: sanitizeAppearance(g.appearance), reveal: REVEALS.includes(g.reveal) ? g.reveal : "all", photo: g.photo || null, theme: theme(g.theme, "christmas") };
 }
-const filesOf = g => [...g.items.filter(i => i.file).map(i => i.file), ...(g.photo?.file ? [g.photo.file] : [])];
+const filesOf = g => [...g.items.filter(i => i.file).map(i => i.file), ...(g.photo?.file ? [g.photo.file] : []),
+  ...(g.clip?.file ? [g.clip.file] : []), ...(g.reaction?.file ? [g.reaction.file] : [])];
 
 export function isLocked(g, now = Date.now()) {
   if (g.manualUnlock || g.anytime) return false;
@@ -122,6 +139,7 @@ function summary(g) {
     anytime: g.anytime, openAt: g.openAt, manualUnlock: g.manualUnlock, locked: isLocked(g),
     appearance: g.appearance, reveal: g.reveal, theme: g.theme,
     itemCount: g.items.length, fileCount: g.items.filter(i => i.file).length, hasPhoto: !!g.photo,
+    hasClip: !!g.clip, hasReaction: !!g.reaction,
     createdAt: g.createdAt, updatedAt: g.updatedAt
   };
 }
@@ -140,7 +158,9 @@ function publicGift(g) {
       file: i.file ? { name: i.file.name, size: i.file.size } : null
     })),
     // the image itself comes from gifts/<code>/photo?t=<token>
-    photo: g.photo ? { caption: g.photo.caption, frame: g.photo.frame, w: g.photo.file.w || null, h: g.photo.file.h || null } : null
+    photo: g.photo ? { caption: g.photo.caption, frame: g.photo.frame, w: g.photo.file.w || null, h: g.photo.file.h || null } : null,
+    // the recording itself comes from gifts/<code>/clip?t=<token>
+    clip: g.clip ? { kind: g.clip.kind, duration: g.clip.duration } : null
   };
 }
 
@@ -153,6 +173,18 @@ function contentDisposition(name, download) {
 }
 
 function imageResponse(file, meta) {
+  return new Response(file, {
+    headers: {
+      "content-type": fileType(meta),
+      "content-disposition": "inline",
+      "cache-control": "private, no-store",
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "default-src 'none'; sandbox"
+    }
+  });
+}
+
+function mediaResponse(file, meta) {
   return new Response(file, {
     headers: {
       "content-type": fileType(meta),
@@ -234,7 +266,7 @@ export function createApp({
       createdAt: w.createdAt,
       giftCount: await storage.countGiftsByOwner(w.id),
       usedBytes: w.usedBytes || 0,
-      limits: { gifts: maxGifts, storageBytes: maxStorageBytes, uploadBytes: maxUploadBytes }
+      limits: { gifts: maxGifts, storageBytes: maxStorageBytes, uploadBytes: maxUploadBytes, clipSeconds: CLIP_SECONDS }
     };
   }
   const cleanName = v => str(v, 80).replace(/\s+/g, " ").trim();
@@ -414,6 +446,19 @@ export function createApp({
     };
   }
 
+  /** The creator's voice or video message: a recording this workshop uploaded */
+  async function sanitizeClip(raw, previous, owner) {
+    if (!raw || typeof raw !== "object" || !raw.file?.id) return null;
+    if (previous?.file?.id === raw.file.id) return previous;
+    const meta = await storage.getFileMeta(String(raw.file.id));
+    if (!meta || meta.owner !== owner || !isMedia(meta)) return null;
+    return {
+      file: { id: meta.id, name: meta.name, size: meta.size, type: meta.type },
+      kind: meta.type.startsWith("audio/") ? "audio" : "video",
+      duration: seconds(meta.duration, CLIP_SECONDS)
+    };
+  }
+
   /** before/after: lists of { id, size } still referenced by a box */
   async function removeOrphanFiles(w, before, after) {
     const keep = new Set(after.map(f => f.id));
@@ -462,6 +507,8 @@ export function createApp({
           openAt: g.anytime ? null : g.openAt,
           ringAt: g.ringAt || null,
           owner,                                   // only the signed-in creator may preview a locked box
+          // ask before unwrapping; once a video arrived there's nothing more to ask
+          askReaction: !!g.askReaction && !g.reaction ? { seconds: REACTION_SECONDS, bytes: maxUploadBytes } : null,
           serverNow: new Date().toISOString()
         });
       }
@@ -510,6 +557,47 @@ export function createApp({
         const file = await storage.readFile(g.photo.file.id);
         if (!file) return fail(404, "not_found", "Fotka nenalezena.");
         return imageResponse(file.body, file.meta);
+      }
+
+      if (seg.length === 3 && seg[2] === "clip" && method === "GET") {
+        if (!(await isOwner())) {
+          if (!checkToken(SECRET, giftScope(g), new URL(req.url).searchParams.get("t"))) {
+            return fail(401, "bad_token", "Platnost odkazu vypršela. Otevři dárek znovu.");
+          }
+          if (isLocked(g)) return fail(423, "locked", "Dárek ještě nejde rozbalit.");
+        }
+        const file = g.clip?.file ? await storage.readFile(g.clip.file.id) : null;
+        if (!file) return fail(404, "not_found", "Vzkaz nenalezen.");
+        return mediaResponse(file.body, file.meta);
+      }
+
+      // the recipient's unwrapping video: only when the creator asked for it, only from someone who unwrapped the box
+      if (seg.length === 3 && seg[2] === "reaction" && method === "POST") {
+        if (!g.askReaction) return fail(403, "not_wanted", "U tohohle dárku se reakce nenahrává.");
+        if (!checkToken(SECRET, giftScope(g), req.headers.get("x-gift-token"))) {
+          return fail(401, "bad_token", "Platnost odkazu vypršela. Otevři dárek znovu.");
+        }
+        const tooBig = () => fail(413, "too_large", `Nahrávka je větší než ${MB(maxUploadBytes)} MB.`);
+        if (Number(req.headers.get("content-length") || 0) > maxUploadBytes) return tooBig();
+        const buf = Buffer.from(await req.arrayBuffer());
+        if (buf.length > maxUploadBytes) return tooBig();
+        const type = mediaType(sniffType(buf), "video");
+        if (!type || !type.startsWith("video/")) return fail(415, "bad_type", "Tohle není video.");
+        const owner = await storage.getWorkshop(g.owner);
+        if (!owner) return fail(404, "not_found", "Dárek nenalezen.");
+        const old = g.reaction?.file || null;
+        if ((owner.usedBytes || 0) - (old?.size || 0) + buf.length > maxStorageBytes) {
+          return fail(413, "quota", "Dílna dárce už nemá na video místo.");
+        }
+        const now = new Date().toISOString();
+        const meta = { id: randomId(12), owner: g.owner, name: "reakce", size: buf.length, type, createdAt: now };
+        await storage.saveFile(meta, buf);
+        const fresh = (await storage.getGift(g.code)) || g;
+        await storage.putGift({ ...fresh, reaction: { file: { id: meta.id, name: meta.name, size: meta.size, type }, at: now, duration: seconds(req.headers.get("x-media-duration"), REACTION_SECONDS) } });
+        if (old) { try { await storage.deleteFile(old.id); } catch { /* ignore */ } }
+        await adjustUsage(owner, buf.length - (old?.size || 0));
+        await pushAll(`w:${g.owner}`, { title: "Přišlo video z rozbalování 🎬", body: `Obdarovaný ti poslal, jak rozbaluje „${g.title || "Dárek"}“.`, url: "dilna", tag: `reaction-${g.code}` });
+        return json({ ok: true }, 201);
       }
 
       if (seg.length === 5 && seg[2] === "items" && seg[4] === "file" && method === "GET") {
@@ -668,27 +756,30 @@ export function createApp({
           if (len > maxUploadBytes) return tooBig();
           const buf = Buffer.from(await req.arrayBuffer());
           if (buf.length > maxUploadBytes) return tooBig();
-          const type = sniffType(buf);
-          if (!type) return fail(415, "bad_type", "Nahrát jde PDF poukaz nebo fotka (JPEG, PNG, WebP).");
+          const sniffed = sniffType(buf);
+          const type = sniffed && (sniffed.startsWith("media/") || sniffed.startsWith("audio/")) ? mediaType(sniffed, req.headers.get("x-media-kind")) : sniffed;
+          if (!type) return fail(415, "bad_type", "Nahrát jde PDF poukaz, fotka (JPEG, PNG, WebP) nebo zvuková či video zpráva.");
           const fresh = await storage.getWorkshop(w.id);
           if ((fresh.usedBytes || 0) + buf.length > maxStorageBytes) {
             return fail(413, "quota", `Dílna má místo na ${MB(maxStorageBytes)} MB souborů a je plná. Smaž nepotřebné poukazy nebo fotky.`);
           }
-          const fallback = type === "application/pdf" ? "poukaz.pdf" : "fotka";
+          const media = /^(audio|video)\//.test(type);
+          const fallback = type === "application/pdf" ? "poukaz.pdf" : media ? "vzkaz" : "fotka";
           let name = fallback;
           try { name = decodeURIComponent(req.headers.get("x-file-name") || name); } catch { /* keep default */ }
           name = name.replace(/[\\/\r\n]/g, "_").slice(0, 120) || fallback;
           const dim = v => { const n = Math.round(Number(v)); return n > 0 && n < 20000 ? n : null; };
           const meta = { id: randomId(12), owner: w.id, name, size: buf.length, type, createdAt: new Date().toISOString() };
-          if (type !== "application/pdf") { meta.w = dim(req.headers.get("x-image-width")); meta.h = dim(req.headers.get("x-image-height")); }
+          if (media) meta.duration = seconds(req.headers.get("x-media-duration"), CLIP_SECONDS);
+          else if (type !== "application/pdf") { meta.w = dim(req.headers.get("x-image-width")); meta.h = dim(req.headers.get("x-image-height")); }
           await storage.saveFile(meta, buf);
           await adjustUsage(w, buf.length);
-          return json({ id: meta.id, name: meta.name, size: meta.size, type, w: meta.w ?? null, h: meta.h ?? null }, 201);
+          return json({ id: meta.id, name: meta.name, size: meta.size, type, w: meta.w ?? null, h: meta.h ?? null, duration: meta.duration ?? null }, 201);
         }
         if (seg.length === 3 && method === "GET") {
           const file = await storage.readFile(seg[2]);
           if (!file || file.meta.owner !== w.id) return fail(404, "not_found", "Soubor nenalezen.");
-          return isImage(file.meta) ? imageResponse(file.body, file.meta) : pdfResponse(file.body, file.meta, false);
+          return isImage(file.meta) ? imageResponse(file.body, file.meta) : isMedia(file.meta) ? mediaResponse(file.body, file.meta) : pdfResponse(file.body, file.meta, false);
         }
       }
 
@@ -740,6 +831,7 @@ export function createApp({
           const b = await readJson(req);
           const items = await sanitizeItems(b.items, g.items, w.id);
           const photo = b.photo === undefined ? g.photo : await sanitizePhoto(b.photo, g.photo, w.id);
+          const clip = b.clip === undefined ? g.clip || null : await sanitizeClip(b.clip, g.clip, w.id);
           const next = {
             ...g,
             title: str(b.title, 120).trim() || g.title,
@@ -754,6 +846,8 @@ export function createApp({
             theme: b.theme === undefined ? g.theme : theme(b.theme),
             items,
             photo,
+            clip,
+            askReaction: b.askReaction === undefined ? !!g.askReaction : !!b.askReaction,
             updatedAt: new Date().toISOString()
           };
           if (b.password === null) next.passwordHash = null;
@@ -793,6 +887,20 @@ export function createApp({
           return json({ ok: true });
         }
 
+        if (seg.length === 4 && seg[3] === "reaction" && method === "GET") {
+          const file = g.reaction?.file ? await storage.readFile(g.reaction.file.id) : null;
+          if (!file) return fail(404, "not_found", "Video nenalezeno.");
+          return mediaResponse(file.body, file.meta);
+        }
+        if (seg.length === 4 && seg[3] === "reaction" && method === "DELETE") {
+          if (g.reaction?.file) {
+            await storage.putGift({ ...g, reaction: null });
+            try { await storage.deleteFile(g.reaction.file.id); } catch { /* ignore */ }
+            await adjustUsage(w, -(g.reaction.file.size || 0));
+          }
+          return json({ ...adminView({ ...g, reaction: null }), stats: await storage.getStats(g.code) });
+        }
+
         // a copy of the saved box under a new code (shares the files; stats, schedule and recipient start fresh)
         if (seg.length === 4 && seg[3] === "duplicate" && method === "POST") {
           if (await storage.countGiftsByOwner(w.id) >= maxGifts) {
@@ -803,7 +911,7 @@ export function createApp({
             ...g,
             code: await uniqueCode(),
             title: `${g.title} (kopie)`.slice(0, 120),
-            recipientEmail: "", notifiedAt: null, ringAt: null,
+            recipientEmail: "", notifiedAt: null, ringAt: null, reaction: null,
             items: g.items.map(i => ({ ...i, file: i.file ? { ...i.file } : null })),
             photo: g.photo ? { ...g.photo, file: { ...g.photo.file } } : null,
             createdAt: now, updatedAt: now

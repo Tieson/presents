@@ -847,3 +847,53 @@ textarea.input { resize: vertical; min-height: 96px; }
 .head-side { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
 .dup-btn { display: inline-flex; align-items: center; gap: 7px; }
 @media (max-width: 640px) { .head-side { flex-direction: row; align-items: center; width: 100%; justify-content: space-between; } }
+
+/* ---------- voice / video message ---------- */
+.clip-start { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.clip-opt {
+  appearance: none; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 16px 8px; border-radius: 8px; border: 1px dashed rgba(42,26,16,.28); background: rgba(255,255,255,.35);
+  font: 400 14px/1.3 var(--f-body); color: var(--ink); transition: border-color .2s, background .2s;
+}
+.clip-opt svg { width: 24px; height: 24px; color: var(--burgundy); margin-bottom: 4px; }
+.clip-opt b { font-weight: 600; }
+.clip-opt small { font-size: 12px; color: var(--ink-soft); }
+.clip-opt:hover { border-color: var(--burgundy); background: rgba(255,255,255,.6); }
+.clip-opt:focus-visible { outline: 2px solid var(--burgundy); outline-offset: 2px; }
+@media (max-width: 460px) { .clip-start { grid-template-columns: 1fr; } .clip-opt { flex-direction: row; justify-content: flex-start; gap: 12px; padding: 12px 14px; } .clip-opt svg { margin: 0; } .clip-opt small { margin-left: auto; } }
+
+.clip-rec { border-radius: 10px; overflow: hidden; background: #17110d; color: #f6ead2; }
+.clip-rec video { display: block; width: 100%; max-height: 320px; object-fit: cover; transform: scaleX(-1); background: #000; }
+.clip-mic { display: grid; place-items: center; height: 120px; color: var(--gold-light); }
+.clip-mic svg { width: 44px; height: 44px; animation: micPulse 1.4s ease-in-out infinite; }
+@keyframes micPulse { 0%,100% { transform: scale(1); opacity: .75; } 50% { transform: scale(1.12); opacity: 1; } }
+.clip-rec-bar { display: flex; align-items: center; gap: 12px; padding: 12px 14px; flex-wrap: wrap; }
+.clip-lead { font-size: 15px; flex: 1; }
+.clip-lead b { font: 600 22px/1 var(--f-display); color: var(--gold-light); margin-left: 4px; }
+.clip-ring {
+  --p: 0; width: 46px; height: 46px; border-radius: 50%; flex: none; display: grid; place-items: center;
+  background: conic-gradient(#e2574c calc(var(--p) * 360deg), rgba(255,255,255,.16) 0);
+  font-variant-numeric: tabular-nums;
+}
+.clip-ring b { width: 36px; height: 36px; border-radius: 50%; background: #17110d; display: grid; place-items: center; font: 600 15px/1 var(--f-body); }
+.clip-live { flex: 1; display: inline-flex; align-items: center; gap: 8px; font-size: 14px; }
+.clip-live i { width: 9px; height: 9px; border-radius: 50%; background: #e2574c; animation: recDot 1s steps(2) infinite; }
+@keyframes recDot { 50% { opacity: .25; } }
+.clip-rec .chip { background: none; border-color: rgba(255,255,255,.3); color: #f6ead2; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+.clip-have { display: flex; flex-direction: column; gap: 10px; }
+.clip-player { min-height: 44px; display: grid; }
+.clip-player audio { width: 100%; }
+.clip-player video { width: 100%; max-height: 360px; border-radius: 8px; background: #000; }
+.clip-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 14px; color: var(--ink-soft); }
+.clip-meta > span { display: inline-flex; align-items: center; gap: 7px; }
+.clip-meta svg { color: var(--burgundy); }
+.clip-meta b { color: var(--ink); font-weight: 600; }
+
+/* ---------- the recipient's unwrapping video ---------- */
+.reaction { margin: 14px 0 6px; padding: 14px; border-radius: 10px; background: rgba(255,255,255,.5); border: 1px solid var(--line-ink); display: flex; flex-direction: column; gap: 10px; }
+.reaction-head { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 14px; color: var(--ink-soft); }
+.reaction-head b { color: var(--ink); font-weight: 600; }
+.reaction-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+@media (prefers-reduced-motion: reduce) { .clip-mic svg, .clip-live i { animation: none; } }
