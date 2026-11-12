@@ -49,11 +49,27 @@ function sharePreview() {
   };
 }
 
+/**
+ * The trial workshop runs server/app.js inside the browser. Its Node-only helpers are swapped
+ * for browser stand-ins, only in the web bundle (the real server never goes through Vite).
+ */
+function browserBackend() {
+  const swap = { "./security.js": "security.js", "./push.js": "push.js" };
+  return {
+    name: "xd-browser-backend",
+    enforce: "pre",
+    resolveId(source, importer) {
+      if (swap[source] && importer && /[\\/]server[\\/]app\.js$/.test(importer.split("?")[0])) return resolve(web, "assets/local", swap[source]);
+      return null;
+    }
+  };
+}
+
 export default defineConfig({
   root: web,
   base: "./",                 // relative asset URLs → works in a sub-folder on PHP hosting too
   appType: "mpa",
-  plugins: [devApi(), sharePreview()],
+  plugins: [devApi(), sharePreview(), browserBackend()],
   build: {
     outDir: resolve(import.meta.dirname, process.env.XD_OUT || "dist"),
     emptyOutDir: true,
@@ -64,5 +80,5 @@ export default defineConfig({
       }
     }
   },
-  server: { port: 5173 }
+  server: { port: 5173, fs: { allow: [import.meta.dirname] } }
 });
