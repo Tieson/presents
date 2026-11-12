@@ -897,3 +897,27 @@ textarea.input { resize: vertical; min-height: 96px; }
 .reaction-head b { color: var(--ink); font-weight: 600; }
 .reaction-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 @media (prefers-reduced-motion: reduce) { .clip-mic svg, .clip-live i { animation: none; } }
+
+/* ---------- trial workshop (boxes kept in this browser only) ---------- */
+.try-card {
+  width: 100%; margin-top: 22px; padding: 20px clamp(18px, 4vw, 28px);
+  display: flex; align-items: center; justify-content: space-between; gap: 18px 26px; flex-wrap: wrap;
+  border: 1px dashed rgba(214,178,106,.55); border-radius: 4px; background: rgba(214,178,106,.06); text-align: left;
+}
+.try-card > div { flex: 1 1 320px; }
+.try-card h2 { margin: 0 0 4px; font: italic 400 22px/1.2 var(--f-display); }
+.try-card p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.45; max-width: 64ch; }
+.local-bar {
+  max-width: 1240px; margin: 16px auto 0; padding: 10px 14px;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  border: 1px solid rgba(214,178,106,.5); border-radius: 6px; background: rgba(214,178,106,.1);
+}
+.local-bar p { margin: 0; flex: 1 1 260px; font-size: 14px; line-height: 1.4; }
+.local-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 0 4px rgba(214,178,106,.2); flex: none; }
+.local-bar + .layout { padding-top: 18px; }
+body.is-local #notifyBlock, body.is-local #regenCode { display: none; }
+.sync-lead { margin: 0; padding: 0 24px 16px; max-width: none; }
+.sync-msg { margin: 0; padding: 0 24px; font-size: 14px; color: var(--ink); }
+.sync-msg:empty { display: none; }
+.sync-msg.error { color: #a3162b; }
+.sync-alt { padding: 12px 24px 20px; justify-content: space-between; }

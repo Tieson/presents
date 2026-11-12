@@ -349,6 +349,10 @@ import "./rec.js";
     clearInterval(tick);
     if (!code) { showHub(); return; }
     show("loading"); say("");
+    // a box from the trial workshop lives in this browser only
+    if (window.XD.localMarked() && !window.XD.isLocal()) {
+      try { if (await (await window.XD.loadLocal()).hasGift(code)) await window.XD.useLocal(); } catch { /* ask the server */ }
+    }
     try {
       meta = await api(`gifts/${code}`);
       offset = Date.parse(meta.serverNow) - Date.now();
@@ -575,7 +579,7 @@ import "./rec.js";
       const o = opened;
       e.target.disabled = true; e.target.textContent = "Načítám…";
       try {
-        const r = await fetch(`api/gifts/${encodeURIComponent(o.g.code)}/clip?t=${encodeURIComponent(o.token || "")}`, { credentials: "same-origin" });
+        const r = await window.XD.fetch(`gifts/${encodeURIComponent(o.g.code)}/clip?t=${encodeURIComponent(o.token || "")}`);
         if (!r.ok) throw new Error("clip");
         o.clipUrl = URL.createObjectURL(await r.blob());
         if (opened === o && $("clipBox")) show(true);
@@ -749,8 +753,8 @@ import "./rec.js";
       if (btn.dataset.done) { close(); return; }
       btn.disabled = true; btn.textContent = "Posílám…";
       try {
-        const r = await fetch(`api/gifts/${encodeURIComponent(code)}/reaction`, {
-          method: "POST", credentials: "same-origin", body: out.blob,
+        const r = await window.XD.fetch(`gifts/${encodeURIComponent(code)}/reaction`, {
+          method: "POST", body: out.blob,
           headers: { "Content-Type": "application/octet-stream", "X-Gift-Token": token, "X-Media-Duration": String(out.duration) }
         });
         if (!r.ok) { const d = await r.json().catch(() => null); throw new Error(d?.message || "Video se nepodařilo odeslat."); }

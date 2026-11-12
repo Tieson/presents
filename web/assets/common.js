@@ -2,15 +2,93 @@
 (function () {
   const API = "api/";
 
-  async function api(path, { method = "GET", body, admin = false, raw = false, headers = {} } = {}) {
-    const opts = { method, headers: { ...headers }, credentials: "same-origin" };
+  /* ---------- trial workshop: the backend runs in this browser (see local/local.js) ---------- */
+  const LOCAL_FLAG = "xd:local";
+  let local = null;
+  const localMarked = () => { try { return localStorage.getItem(LOCAL_FLAG) === "1"; } catch { return false; } };
+  const loadLocal = () => import("./local/local.js");
+  /** Switches every api/ call of this page to the trial workshop (created on first use) */
+  async function useLocal(name) {
+    const m = await loadLocal();
+    await m.start(name);
+    local = m;
+    try { localStorage.setItem(LOCAL_FLAG, "1"); } catch { /* ignore */ }
+    watchUrls();
+    return m;
+  }
+  function leaveLocal(forget = false) {
+    local = null;
+    if (forget) { try { localStorage.removeItem(LOCAL_FLAG); } catch { /* ignore */ } }
+  }
+
+  /** fetch("api/<path>"), or the trial workshop's answer; { remote: true } always asks the server */
+  function xfetch(path, init = {}, { remote = false } = {}) {
+    if (local && !remote) return local.request(path, init);
+    return fetch(API + path, { credentials: "same-origin", ...init });
+  }
+
+  /** XMLHttpRequest for uploads (progress); in the trial workshop a stand-in with the same few members */
+  function xhr() {
+    if (!local) return new XMLHttpRequest();
+    const m = local;
+    return {
+      upload: {}, status: 0, responseText: "", _h: {},
+      open(method, url) { this._m = method; this._u = url.replace(/^api\//, ""); },
+      setRequestHeader(k, v) { this._h[k] = v; },
+      send(body) {
+        m.request(this._u, { method: this._m, headers: this._h, body }).then(async r => {
+          this.status = r.status; this.responseText = await r.text();
+          this.upload.onprogress?.({ lengthComputable: true, loaded: 1, total: 1 });
+          this.onload?.();
+        }, () => this.onerror?.());
+      }
+    };
+  }
+
+  /* src/href="api/…" can't reach a backend that lives in the page: swap them for blob URLs as they appear */
+  const blobUrls = new Map();
+  let watching = false;
+  function swapUrl(el, attr) {
+    const v = el.getAttribute(attr);
+    if (!v || !v.startsWith(API) || !local) return;
+    el.removeAttribute(attr);
+    if (!blobUrls.has(v)) {
+      blobUrls.set(v, local.request(v.slice(API.length)).then(async r => (r.ok ? URL.createObjectURL(await r.blob()) : null), () => null));
+    }
+    blobUrls.get(v).then(u => {
+      if (!u) return;
+      if (attr === "href" && /[?&]dl=1/.test(v)) el.setAttribute("download", "");
+      el.setAttribute(attr, u);
+    });
+  }
+  function swapIn(node) {
+    if (node.nodeType !== 1) return;
+    for (const attr of ["src", "href"]) {
+      if (node.hasAttribute?.(attr)) swapUrl(node, attr);
+      node.querySelectorAll?.(`[${attr}^="${API}"]`).forEach(el => swapUrl(el, attr));
+    }
+  }
+  function watchUrls() {
+    if (watching) return;
+    watching = true;
+    swapIn(document.documentElement);
+    new MutationObserver(list => {
+      for (const m of list) {
+        if (m.type === "attributes") swapUrl(m.target, m.attributeName);
+        else m.addedNodes.forEach(swapIn);
+      }
+    }).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ["src", "href"] });
+  }
+
+  async function api(path, { method = "GET", body, admin = false, raw = false, headers = {}, remote = false } = {}) {
+    const opts = { method, headers: { ...headers } };
     if (admin) opts.headers["X-Admin"] = "1";
     if (body !== undefined) {
       if (raw) opts.body = body;
       else { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
     }
     let res;
-    try { res = await fetch(API + path, opts); }
+    try { res = await xfetch(path, opts, { remote }); }
     catch { throw Object.assign(new Error("Nepodařilo se spojit se serverem. Zkontroluj připojení."), { status: 0, code: "network" }); }
     let data = null;
     try { data = await res.json(); } catch { /* not json */ }
@@ -100,7 +178,7 @@
     return location.origin + p;
   }
 
-  window.XD = { api, normalizePassword, normalizeCode, formatLong, formatShort, formatWithYear, plural, formatSize, relative, esc, store, copy, appBase };
+  window.XD = { api, fetch: xfetch, xhr, useLocal, leaveLocal, loadLocal, localMarked, isLocal: () => !!local, normalizePassword, normalizeCode, formatLong, formatShort, formatWithYear, plural, formatSize, relative, esc, store, copy, appBase };
 })();
 
 /* ---------- system notifications (Web Push) ---------- */

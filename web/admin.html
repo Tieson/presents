@@ -81,6 +81,13 @@
         <button class="w-link" type="button" id="lostBack">Zpět, odkaz mám</button>
       </form>
     </div>
+    <div class="try-card">
+      <div>
+        <h2>Jen si to chceš zkusit?</h2>
+        <p>Zabal si dárek hned, bez účtu. Zůstane jen v tomhle prohlížeči, dokud si ho neuložíš na účet. Ten budeš potřebovat až ve chvíli, kdy budeš chtít dárek někomu poslat.</p>
+      </div>
+      <button class="btn" type="button" id="tryBtn">Vyzkoušet bez účtu</button>
+    </div>
     <p class="login-msg" id="loginMsg" role="status" aria-live="polite"></p>
   </div>
 </main>
@@ -131,6 +138,12 @@
       </button>
     </div>
   </header>
+
+  <div class="local-bar" id="localBar" hidden>
+    <span class="local-dot" aria-hidden="true"></span>
+    <p id="localBarText"></p>
+    <button class="btn gold small" type="button" id="localBarBtn">Uložit na účet</button>
+  </div>
 
   <div class="layout" id="layout">
     <!-- shelf: list of boxes -->
@@ -451,6 +464,53 @@
 </div>
 
 <!-- ============ ACCOUNT PANEL ============ -->
+<!-- trial workshop → account: asks for the e-mail only now, then moves the boxes to the server -->
+<dialog class="dlg acct sync" id="syncDlg">
+<div class="dlg-card acct-card">
+  <div class="acct-head">
+    <h2 id="syncTitle">Uložit na účet</h2>
+    <button type="button" class="acct-close" id="syncClose" aria-label="Zavřít">
+      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+  <p class="hint sync-lead" id="syncLead"></p>
+  <form class="acct-block" id="syncForm" novalidate>
+    <div class="field">
+      <label for="sName" class="label">Název dílny</label>
+      <input id="sName" class="input" type="text" maxlength="80" placeholder="Tomova dílna" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="sEmail" class="label">E-mail</label>
+      <input id="sEmail" class="input" type="email" maxlength="200" placeholder="tom@example.cz" autocomplete="email">
+      <p class="hint" id="sEmailHint">Pošleme ti na něj odkaz, kterým se do dílny přihlásíš z jakéhokoli zařízení. Heslo není potřeba.</p>
+    </div>
+    <div class="field" id="sCodeWrap" hidden>
+      <label for="sCode" class="label">Kód pro založení</label>
+      <input id="sCode" class="input" type="text" maxlength="80" autocomplete="off" spellcheck="false">
+      <p class="hint">Tahle dílna je jen pro pozvané. Kód ti dá ten, kdo ji provozuje.</p>
+    </div>
+    <div class="acct-row">
+      <button class="btn gold" type="submit" id="syncGo">Založit účet a uložit dárky</button>
+    </div>
+  </form>
+  <form class="acct-block" id="syncKeyForm" novalidate hidden>
+    <div class="field">
+      <label for="sKey" class="label">Tajný odkaz do tvé dílny</label>
+      <input id="sKey" class="input" type="text" placeholder="…/dilna#klic=…" autocomplete="off" spellcheck="false" autocapitalize="off">
+      <p class="hint">Dárky z tohohle prohlížeče se přidají k těm, které v dílně už máš.</p>
+    </div>
+    <div class="acct-row">
+      <button class="btn gold" type="submit" id="syncKeyGo">Přihlásit a uložit dárky</button>
+    </div>
+  </form>
+  <p class="sync-msg" id="syncMsg" role="status" aria-live="polite"></p>
+  <div class="chips sync-alt">
+    <button type="button" class="chip quiet" id="syncSwitch">Už účet mám</button>
+    <button type="button" class="chip quiet" id="syncDrop">Zahodit zkušební dárky</button>
+  </div>
+</div>
+</dialog>
+
 <dialog class="dlg acct" id="acct">
   <div class="dlg-card acct-card">
     <div class="acct-head">

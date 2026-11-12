@@ -936,14 +936,21 @@ export function createApp({
   }
 
   /** Web-standard handler. `path` is the part after /api/ */
-  return async function handle(req, path) {
+  async function handle(req, path) {
     try {
       return await route(req, path);
     } catch (err) {
       console.error(err);
       return fail(500, "server_error", "Na serveru se něco pokazilo. Zkus to prosím znovu.");
     }
+  }
+  /** Cookie header of a signed-in workshop, for whoever embeds the app in-process (the browser-only
+      trial workshop, where a Response can't carry Set-Cookie). Not reachable over HTTP. */
+  handle.session = async id => {
+    const w = await storage.getWorkshop(id);
+    return w ? `${WS_COOKIE}=${sessionToken(w)}` : "";
   };
+  return handle;
 }
 
 /** Extracts the API sub-path from a request URL (supports /api/x/y and /api?path=x/y) */

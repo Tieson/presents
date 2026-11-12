@@ -299,6 +299,7 @@ import "./rec.js";
     $("acctUsage").textContent = `Boxy ${ws.giftCount ?? list.length} z ${L.gifts ?? "?"} · PDF ${formatSize(ws.usedBytes || 0)} z ${formatSize(L.storageBytes || 0)}`;
   }
   $("accountBtn").addEventListener("click", async () => {
+    if (isLocal()) { openSync(); return; }
     try { setWorkshop((await api("workshop")).workshop); } catch (err) { if (err.status === 401) return; }
     fillAccount();
     $("acct").showModal();
@@ -393,6 +394,205 @@ import "./rec.js";
       showLogin("Dílna je smazaná.");
     } catch (err) { if (err.status !== 401) toast(err.message, true); }
   });
+
+  /* ---------- trial workshop: boxes live in this browser until they're saved to an account ---------- */
+  const XDc = window.XD;
+  const isLocal = () => XDc.isLocal();
+  const acctLabel = $("accountBtn").querySelector("span"), acctLabelText = acctLabel.textContent;
+  let barAction = null;
+  function localBar(text, btn, action) {
+    $("localBar").hidden = !text;
+    $("localBarText").textContent = text || "";
+    $("localBarBtn").textContent = btn || "";
+    barAction = action || null;
+  }
+  $("localBarBtn").addEventListener("click", () => barAction?.());
+
+  async function enterLocal() {
+    await XDc.useLocal();
+    document.body.classList.add("is-local");
+    setWorkshop((await rawApi("workshop", { admin: true })).workshop);
+    acctLabel.textContent = "Uložit na účet";
+    localBar("Zkušební dílna: dárky jsou uložené jen v tomhle prohlížeči. Než je někomu pošleš, ulož si je na účet.", "Uložit na účet", () => openSync());
+    await showApp();
+  }
+  function leaveLocalUi() {
+    document.body.classList.remove("is-local");
+    acctLabel.textContent = acctLabelText;
+    localBar("");
+  }
+  $("tryBtn").addEventListener("click", () => busy($("tryBtn"), async () => {
+    $("loginMsg").textContent = "";
+    try { await enterLocal(); }
+    catch { $("loginMsg").textContent = "Zkušební dílnu se nepodařilo otevřít. Prohlížeč nejspíš nedovolil ukládat data (anonymní okno?)."; }
+  }));
+
+  /** Replays the trial boxes and their files against the real API (the server session must exist) */
+  async function transfer(say) {
+    const L = await XDc.loadLocal();
+    const d = await L.dump();
+    const R = (path, o = {}) => rawApi(path, { ...o, admin: true, remote: true });
+    let done = {};
+    try { done = JSON.parse(localStorage.getItem("xd:sync") || "{}") || {}; } catch { /* start over */ }
+    const sent = new Map();
+    async function up(f, headers = {}) {
+      if (!f?.id) return null;
+      if (!sent.has(f.id)) {
+        const blob = await d.file(f.id);
+        if (!blob) sent.set(f.id, null);
+        else {
+          const r = await XDc.fetch("admin/files", {
+            method: "POST", body: blob,
+            headers: { "X-Admin": "1", "Content-Type": "application/octet-stream", "X-File-Name": encodeURIComponent(f.name || "soubor"), ...headers }
+          }, { remote: true });
+          const data = await r.json().catch(() => null);
+          if (!r.ok) throw new Error(data?.message || `Soubor „${f.name}“ se nepodařilo nahrát.`);
+          sent.set(f.id, { id: data.id });
+        }
+      }
+      return sent.get(f.id);
+    }
+    let n = 0;
+    for (const g of d.gifts) {
+      n++;
+      if (done[g.code]) continue;
+      say(`Ukládám dárek ${n} z ${d.gifts.length}…`);
+      const items = [];
+      for (const it of g.items || []) items.push({ id: it.id, name: it.name, description: it.description, file: await up(it.file) });
+      const pf = g.photo?.file ? await up(g.photo.file, { "X-Image-Width": String(g.photo.file.w || ""), "X-Image-Height": String(g.photo.file.h || "") }) : null;
+      const cf = g.clip?.file ? await up(g.clip.file, { "X-Media-Kind": g.clip.kind || "video", "X-Media-Duration": String(g.clip.duration || "") }) : null;
+      const made = await R("admin/gifts", { method: "POST", body: { title: g.title, openAt: g.openAt, theme: g.theme, appearance: g.appearance, reveal: g.reveal } });
+      try {
+        await R(`admin/gifts/${made.code}`, { method: "PUT", body: {
+          title: g.title, showTitle: g.showTitle, message: g.message, signature: g.signature,
+          anytime: g.anytime, manualUnlock: g.manualUnlock, openAt: g.openAt,
+          appearance: g.appearance, reveal: g.reveal, theme: g.theme, items,
+          photo: pf ? { file: pf, caption: g.photo.caption, frame: g.photo.frame } : null,
+          clip: cf ? { file: cf } : null,
+          askReaction: !!g.askReaction,
+          ...(g.password ? { password: g.password } : {})
+        } });
+      } catch (err) {
+        try { await R(`admin/gifts/${made.code}`, { method: "DELETE" }); } catch { /* ignore */ }
+        throw err;
+      }
+      done[g.code] = made.code;
+      try { localStorage.setItem("xd:sync", JSON.stringify(done)); } catch { /* ignore */ }
+    }
+    try { localStorage.removeItem("xd:sync"); } catch { /* ignore */ }
+    await L.clear();
+    XDc.leaveLocal(true);
+    return d.gifts.length;
+  }
+
+  let syncWs = null;      // the server workshop once it exists (so a failed transfer can be retried)
+  let syncNew = null;     // …and the answer to creating it (its secret link is shown once)
+  let syncBusy = false;
+  const syncSay = (text, isError = false) => { $("syncMsg").textContent = text; $("syncMsg").classList.toggle("error", isError); };
+  function syncMode(key) {
+    $("syncForm").hidden = key;
+    $("syncKeyForm").hidden = !key;
+    $("syncSwitch").textContent = key ? "Účet ještě nemám" : "Už účet mám";
+  }
+  function openSync(why = "") {
+    if (isDirty()) { toast("Nejdřív ulož rozdělaný box tlačítkem Uložit.", true); return; }
+    $("syncTitle").textContent = why === "share" ? "Ke sdílení je potřeba účet" : "Uložit na účet";
+    $("syncLead").textContent = `${why === "share" ? "Dárek je zatím jen v tomhle prohlížeči, takže by ho nikdo jiný neotevřel. " : ""}Založ si účet a ${list.length ? `${list.length === 1 ? "tvůj dárek se uloží" : "tvoje dárky se uloží"} na server` : "dílna se uloží na server"}. Pak půjdou sdílet a dostaneš se k nim odkudkoli.`;
+    $("sEmailHint").textContent = info.mail ? "Pošleme ti na něj odkaz, kterým se do dílny přihlásíš z jakéhokoli zařízení. Heslo není potřeba."
+      : "Nepovinný. Odkaz, kterým se do dílny přihlásíš, ti ukážeme hned po uložení.";
+    $("sCodeWrap").hidden = !info.signupCode;
+    if (!$("sName").value && ws && ws.name !== "Zkušební dílna") $("sName").value = ws.name;
+    syncMode(false);
+    syncSay(syncWs ? "Účet už je založený, zbývá přenést dárky." : "");
+    $("syncDlg").showModal();
+  }
+  $("syncClose").addEventListener("click", () => { if (!syncBusy) $("syncDlg").close(); });
+  $("syncDlg").addEventListener("cancel", e => { if (syncBusy) e.preventDefault(); });
+  $("syncSwitch").addEventListener("click", () => syncMode($("syncKeyForm").hidden));
+
+  async function runSync(signIn) {
+    if (syncBusy) return;
+    syncBusy = true;
+    for (const b of [$("syncGo"), $("syncKeyGo"), $("syncSwitch"), $("syncDrop")]) b.disabled = true;
+    try {
+      if (!syncWs) { syncSay("Připravuju účet…"); syncWs = await signIn(); }
+      const n = await transfer(syncSay);
+      const created = syncNew;
+      syncWs = syncNew = null;
+      $("syncDlg").close();
+      leaveLocalUi();
+      cur = draft = null; snapshot = "";
+      setWorkshop((await rawApi("workshop", { admin: true })).workshop);
+      if (created) {
+        $("createdLink").textContent = linkFor(created.workshop.key);
+        $("createdMailed").hidden = !created.mailed;
+        if (created.mailed) $("createdMailed").textContent = `Odkaz jsme ti poslali i na ${created.workshop.email}. Kdyby nedorazil, mrkni do spamu. I tak si ho radši ulož.`;
+        $("createdSaved").checked = false;
+        $("createdGo").disabled = true;
+        showScreen("created");
+        window.XDfx?.burst(innerWidth / 2, innerHeight * .3, 120);
+      } else {
+        await showApp();
+      }
+      toast(n ? `Hotovo: ${n} ${plural(n, "dárek je", "dárky jsou", "dárků je")} uložených na účtu` : "Dílna je uložená na účtu");
+    } catch (err) {
+      if (err.code === "bad_signup_code") {
+        $("sCodeWrap").hidden = false; $("sCode").focus();
+        syncSay("Zakládání dílen je tady jen pro pozvané. Zadej kód pro založení.", true);
+      } else {
+        syncSay(`${err.message}${syncWs ? " Účet už máš založený, stačí to zkusit znovu." : ""}`, true);
+      }
+    } finally {
+      syncBusy = false;
+      for (const b of [$("syncGo"), $("syncKeyGo"), $("syncSwitch"), $("syncDrop")]) b.disabled = false;
+    }
+  }
+  $("syncForm").addEventListener("submit", e => {
+    e.preventDefault();
+    const email = $("sEmail").value.trim();
+    if (!syncWs && info.mail && !email) { syncSay("Napiš e-mail, na který ti pošleme odkaz do dílny.", true); $("sEmail").focus(); return; }
+    runSync(async () => {
+      const body = { name: $("sName").value, email, theme: ws?.theme };
+      if (!$("sCodeWrap").hidden) body.signupCode = $("sCode").value;
+      syncNew = await rawApi("workshop", { method: "POST", admin: true, remote: true, body });
+      return syncNew.workshop;
+    });
+  });
+  $("syncKeyForm").addEventListener("submit", e => {
+    e.preventDefault();
+    const key = keyFrom($("sKey").value);
+    if (!syncWs && !key) { syncSay("Tohle nevypadá jako odkaz do dílny. Vlož celý odkaz, který končí #klic=…", true); return; }
+    runSync(async () => (await rawApi("workshop/login", { method: "POST", admin: true, remote: true, body: { key } })).workshop);
+  });
+  $("syncDrop").addEventListener("click", async () => {
+    if (!(await confirmDialog({ title: "Zahodit zkušební dárky?", text: "Smažou se z tohohle prohlížeče a nepůjdou vrátit.", ok: "Zahodit" }))) return;
+    try { await (await XDc.loadLocal()).clear(); } catch { /* ignore */ }
+    XDc.leaveLocal(true);
+    try { localStorage.removeItem("xd:sync"); } catch { /* ignore */ }
+    $("syncDlg").close();
+    leaveLocalUi();
+    showLogin("Zkušební dárky jsou smazané.");
+  });
+
+  /** Signed in on the server, but trial boxes are still waiting in this browser: offer to bring them over */
+  async function offerLeftovers() {
+    if (!XDc.localMarked() || isLocal()) return;
+    try {
+      const L = await XDc.loadLocal();
+      const n = (await L.dump()).gifts.length;
+      if (!n) { await L.clear(); XDc.leaveLocal(true); return; }
+      localBar(`V tomhle prohlížeči ${plural(n, "zůstal", "zůstaly", "zůstalo")} ${n} ${plural(n, "zkušební dárek", "zkušební dárky", "zkušebních dárků")}, které nejsou uložené na účtu.`, "Přenést do dílny", async () => {
+        $("localBarBtn").disabled = true;
+        try {
+          const k = await transfer(text => { $("localBarText").textContent = text; });
+          localBar("");
+          await loadList();
+          toast(`Přeneseno: ${k} ${plural(k, "dárek", "dárky", "dárků")}`);
+        } catch (err) { toast(err.message, true); offerLeftovers(); }
+        finally { $("localBarBtn").disabled = false; }
+      });
+    } catch { /* the browser storage is gone: nothing to offer */ }
+  }
 
   /* ---------- app ---------- */
   async function showApp() {
@@ -688,7 +888,7 @@ import "./rec.js";
     const code = cur.code;
     clipState = { busy: true, mode: "upload", progress: 0 };
     renderClip(); updateDirty();
-    const xhr = new XMLHttpRequest();
+    const xhr = window.XD.xhr();
     xhr.open("POST", "api/admin/files");
     xhr.setRequestHeader("X-Admin", "1");
     xhr.setRequestHeader("X-File-Name", encodeURIComponent(name));
@@ -714,7 +914,7 @@ import "./rec.js";
   }
   /** the saved recording as a blob URL (works in every browser, no streaming needed) */
   async function mediaUrl(path) {
-    const r = await fetch(`api/${path}`, { headers: { "X-Admin": "1" }, credentials: "same-origin" });
+    const r = await window.XD.fetch(path, { headers: { "X-Admin": "1" } });
     if (!r.ok) throw new Error("media");
     return URL.createObjectURL(await r.blob());
   }
@@ -1123,7 +1323,7 @@ import "./rec.js";
     let img;
     try { img = await shrinkImage(file); }
     catch (err) { photoUpload = { error: err.message }; renderPhoto(); updateDirty(); return; }
-    const xhr = new XMLHttpRequest();
+    const xhr = window.XD.xhr();
     xhr.open("POST", "api/admin/files");
     xhr.setRequestHeader("X-Admin", "1");
     xhr.setRequestHeader("X-File-Name", encodeURIComponent(file.name.replace(/\.[^.]+$/, "") + ".jpg"));
@@ -1452,7 +1652,7 @@ import "./rec.js";
     renderFileSlot(slot, item);
     updateDirty();
 
-    const xhr = new XMLHttpRequest();
+    const xhr = window.XD.xhr();
     xhr.open("POST", "api/admin/files");
     xhr.setRequestHeader("X-Admin", "1");
     xhr.setRequestHeader("X-File-Name", encodeURIComponent(file.name));
@@ -1611,6 +1811,7 @@ import "./rec.js";
   }
   function openShare() {
     if (!cur) return;
+    if (isLocal()) { openSync("share"); return; }
     const st = statusOf(cur);
     $("shareCode").textContent = cur.code;
     $("shareUrl").textContent = giftUrl();
@@ -1704,8 +1905,13 @@ import "./rec.js";
     if (wantNew) history.replaceState(null, "", location.pathname + location.search);
     try {
       setWorkshop((await rawApi("workshop", { admin: true })).workshop);
-      showApp();
+      await showApp();
+      offerLeftovers();
     } catch (err) {
+      // not signed in (or no working server at all): a trial workshop started earlier opens straight away
+      if (XDc.localMarked() && !wantNew) {
+        try { if (await (await XDc.loadLocal()).exists()) { await enterLocal(); return; } } catch { /* fall through to the welcome screen */ }
+      }
       showLogin(err.status === 401 ? "" : err.message);
       if (wantNew && err.status === 401) setTimeout(() => $("cName").focus({ preventScroll: true }), 60);
     }
