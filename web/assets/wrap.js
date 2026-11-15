@@ -226,6 +226,22 @@
     };
   }
 
+  /** Resolves once the pattern's image tiles are decoded, so swapping them in doesn't flash blank (a new colour/strength is a new image) */
+  const decoded = new Map();
+  function ready(a) {
+    a = normalize(a);
+    const urls = pattern(a.pattern, inkOf(a).css)[0].filter(v => v.startsWith("url("));
+    return Promise.all(urls.map(v => {
+      if (!decoded.has(v)) {
+        const img = new Image();
+        img.src = v.slice(5, -2);
+        decoded.set(v, (img.decode ? img.decode() : Promise.resolve()).catch(() => {}));
+        if (decoded.size > 60) decoded.delete(decoded.keys().next().value);
+      }
+      return decoded.get(v);
+    }));
+  }
+
   const CLASSES = [
     ...Object.keys(RIBBON_STYLES).map(k => `rb-${k}`),
     ...Object.keys(BOWS).map(k => `bow-${k}`),
@@ -276,5 +292,5 @@
       </span>`;
   }
 
-  window.XDwrap = { GROUPS, inkRgb, PAPERS, INKS, RIBBONS, PATTERNS, RIBBON_STYLES, BOWS, DECOS, DECO_SVG, PHOTO_FRAMES, REVEALS, DEFAULT, OPACITY, normalize, inkOf, vars, apply, classes, markup };
+  window.XDwrap = { GROUPS, inkRgb, PAPERS, INKS, RIBBONS, PATTERNS, RIBBON_STYLES, BOWS, DECOS, DECO_SVG, PHOTO_FRAMES, REVEALS, DEFAULT, OPACITY, normalize, ready, inkOf, vars, apply, classes, markup };
 })();

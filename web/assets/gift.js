@@ -2,6 +2,7 @@ import "./common.js";
 import "./wrap.js";
 import "./fx.js";
 import "./themes.js";
+import "./rec.js";
 
 /* Screen height for the one-screen layout.
    Pinned to the real window height on load and on rotation / browser-bar changes.
@@ -341,12 +342,17 @@ import "./themes.js";
     $("openTitle").textContent = preview ? "Náhled pro tvůrce" : needPw ? "Heslo pro dárek" : "Dárek je připravený";
     $("openBtn").textContent = preview ? "Rozbalit náhled" : "Rozbalit dárek";
     if (needPw) setTimeout(() => $("pwInput").focus({ preventScroll: true }), 50);
+    renderRx();
   }
 
   async function load() {
     clearInterval(tick);
     if (!code) { showHub(); return; }
     show("loading"); say("");
+    // a box from the trial workshop lives in this browser only
+    if (window.XD.localMarked() && !window.XD.isLocal()) {
+      try { if (await (await window.XD.loadLocal()).hasGift(code)) await window.XD.useLocal(); } catch { /* ask the server */ }
+    }
     try {
       meta = await api(`gifts/${code}`);
       offset = Date.parse(meta.serverNow) - Date.now();
@@ -488,6 +494,7 @@ import "./themes.js";
         : g.reveal === "choice" ? (chosen === "all" || chosen === "sequential" ? chosen : null) : (g.reveal || "all"),
       view: "box"
     };
+    if (!isPreview && token && rx.stream) rxStart(token);
     if (reduce) { present.hidden = true; enterOpened(); busy = false; return; }
     toTop();                                   // the present must be on screen for the effect
     present.classList.add("opening");
@@ -534,6 +541,7 @@ import "./themes.js";
         <h2>${esc(g.title || T.defaultTitle)}</h2>
         <div class="ornament" aria-hidden="true">✦</div>
         ${g.message ? `<p class="note">${esc(g.message)}</p>` : ""}
+        ${g.clip && (all || done) ? clipHtml(g) : ""}
         ${g.photo && (all || done) ? photoHtml(g, all ? .35 : 0) : ""}
         ${shown.length
           ? `<ol class="items">${shown.map((it, i) => itemHtml(it, i, all ? { delay: .45 + i * .16 } : { cls: i === fresh ? "flash" : "seen" })).join("")}</ol>`
@@ -543,7 +551,223 @@ import "./themes.js";
       </article>
       ${done && !opened.preview ? ctaHtml() : ""}`;
     $("rewrap").addEventListener("click", rewrap);
+    wireClip();
     if (done && !opened.preview) wireCta();
+  }
+
+  /* ---------- the creator's voice / video message ---------- */
+  const R = window.XDrec;
+  function clipHtml(g) {
+    const audio = g.clip.kind === "audio";
+    return `<div class="clip ${audio ? "audio" : "video"}" id="clipBox">
+      <button type="button" class="btn small gold" id="clipPlay">▶ ${audio ? "Pustit hlasový vzkaz" : "Pustit video vzkaz"}${g.clip.duration ? ` (${R.clock(g.clip.duration)})` : ""}</button>
+    </div>`;
+  }
+  function wireClip() {
+    const box = $("clipBox");
+    if (!box) return;
+    const audio = opened.g.clip.kind === "audio";
+    const show = autoplay => {
+      box.innerHTML = audio ? `<audio controls preload="metadata"></audio>` : `<video controls playsinline preload="metadata"></video>`;
+      const el = box.firstElementChild;
+      R.fixLength(el);
+      el.src = opened.clipUrl;
+      if (autoplay) el.play().catch(() => { /* the browser wants another tap */ });
+    };
+    if (opened.clipUrl) { show(false); return; }
+    $("clipPlay").addEventListener("click", async e => {
+      const o = opened;
+      e.target.disabled = true; e.target.textContent = "Načítám…";
+      try {
+        const r = await window.XD.fetch(`gifts/${encodeURIComponent(o.g.code)}/clip?t=${encodeURIComponent(o.token || "")}`);
+        if (!r.ok) throw new Error("clip");
+        o.clipUrl = URL.createObjectURL(await r.blob());
+        if (opened === o && $("clipBox")) show(true);
+      } catch { e.target.disabled = false; e.target.textContent = "Vzkaz se nepodařilo načíst. Zkusit znovu"; }
+    });
+  }
+
+  /* ---------- the unwrapping video ----------
+     Only when the creator asked for it AND the recipient switches the camera on before unwrapping.
+     Nothing leaves the device until the recipient has watched the video and pressed "Poslat". */
+  const rx = { choice: null, stream: null, video: null, cams: [], rec: null, comp: null, pip: null, error: "" };
+  const rxWanted = () => !!meta?.askReaction && !preview && R.supported("video");
+  const CAM_ICON = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6.5" width="12.5" height="11" rx="2"/><path d="M15.5 10.5l5-3v9l-5-3z"/></svg>`;
+  const FLIP_ICON = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9a8 8 0 0 1 14-3.5L20 8M20 4v4h-4M20 15a8 8 0 0 1-14 3.5L4 16M4 20v-4h4"/></svg>`;
+
+  function rxVideo() {
+    if (!rx.video) {
+      rx.video = document.createElement("video");
+      rx.video.autoplay = true; rx.video.muted = true; rx.video.playsInline = true;
+      rx.video.setAttribute("playsinline", "");
+    }
+    return rx.video;
+  }
+  const rxCamId = () => rx.stream?.getVideoTracks()[0]?.getSettings?.().deviceId || "";
+  function rxMirror() {
+    // the front camera looks right mirrored (the recording itself is never flipped)
+    const f = R.facingOf(rx.stream);
+    rxVideo().classList.toggle("mirror", f ? f === "user" : rx.cams.length < 2 || rx.cams[0]?.deviceId === rxCamId());
+  }
+  function rxOff() {
+    R.stopStream(rx.stream);
+    rx.stream = null;
+    if (rx.video) rx.video.srcObject = null;
+  }
+  async function rxOn() {
+    rx.error = "";
+    try {
+      rx.stream = await R.open({ video: true, audio: true, camera: "user" });
+      rx.cams = await R.cameras();
+      rxVideo().srcObject = rx.stream;
+      rx.choice = "yes";
+    } catch (err) { rx.error = R.explain(err); rx.stream = null; }
+    renderRx();
+  }
+  /** another camera (also in the middle of a recording): `id` = a deviceId, or nothing for the next one */
+  async function rxCamera(id) {
+    if (!rx.stream || rx.switching) return;
+    const cur = rxCamId();
+    if (!id) {
+      const i = rx.cams.findIndex(c => c.deviceId === cur);
+      id = rx.cams.length > 1 ? rx.cams[(i + 1) % rx.cams.length].deviceId : (R.facingOf(rx.stream) === "user" ? "environment" : "user");
+    }
+    if (id === cur) return;
+    rx.switching = true;
+    const old = rx.stream.getVideoTracks();
+    old.forEach(t => { t.stop(); rx.stream.removeTrack(t); });      // phones open one camera at a time
+    let fresh = null;
+    try { fresh = await R.open({ video: true, audio: false, camera: id }); }
+    catch { try { fresh = await R.open({ video: true, audio: false, camera: "user" }); } catch { /* no camera left */ } }
+    fresh?.getVideoTracks().forEach(t => rx.stream.addTrack(t));
+    rxVideo().srcObject = rx.stream;
+    rxVideo().play().catch(() => {});
+    rx.switching = false;
+    rxMirror();
+    const sel = $("rxCam"); if (sel) sel.value = rxCamId();
+    if (!fresh) say("Kameru se nepodařilo přepnout.");
+  }
+
+  function renderRx() {
+    const el = $("rx");
+    if (!rxWanted() || rx.rec) { el.hidden = true; el.innerHTML = ""; return; }
+    el.hidden = false;
+    const secs = meta.askReaction.seconds;
+    if (rx.stream) {
+      const opts = rx.cams.filter(c => c.deviceId).map((c, i) => `<option value="${esc(c.deviceId)}">${esc(c.label || `Kamera ${i + 1}`)}</option>`).join("");
+      el.innerHTML = `
+        <div class="rx-preview" id="rxPreview"></div>
+        ${rx.cams.length > 1 ? `<label class="rx-cam"><span>Kamera</span><select id="rxCam" class="tag-input">${opts}</select></label>` : ""}
+        <p class="rx-note"><b>Kamera je připravená, ještě se nenahrává.</b> Začne to, až dárek rozbalíš, a skončí nejpozději za ${secs} s. Kameru můžeš během nahrávání přepnout.</p>
+        <button type="button" class="tag-link" id="rxCancel">Vypnout kameru, nenahrávat</button>`;
+      $("rxPreview").append(rxVideo());
+      rxVideo().play().catch(() => {});
+      rxMirror();
+      const sel = $("rxCam");
+      if (sel) { sel.value = rxCamId(); sel.addEventListener("change", () => rxCamera(sel.value)); }
+      $("rxCancel").addEventListener("click", () => { rxOff(); rx.choice = "no"; renderRx(); });
+      $("openBtn").textContent = "Rozbalit a nahrávat";
+    } else if (rx.choice === "no") {
+      el.innerHTML = `<p class="rx-note">Rozbalování se nenahrává. <button type="button" class="tag-link inline" id="rxYes">Přece jen se natočit</button></p>`;
+      $("rxYes").addEventListener("click", () => { rx.choice = null; renderRx(); });
+      $("openBtn").textContent = "Rozbalit dárek";
+    } else {
+      el.innerHTML = `
+        <p class="rx-title">${CAM_ICON}Natočíš, jak dárek rozbaluješ?</p>
+        <p class="rx-note">Ten, kdo ti dárek zabalil, by rád viděl tvou radost.</p>
+        <ul class="rx-list">
+          <li>Potřebujeme <b>kameru a mikrofon</b>. Zapnou se, až to dovolíš, a nejdřív uvidíš náhled.</li>
+          <li>Nahrává se od rozbalení, <b>nejvýš ${secs} s</b>.</li>
+          <li>Video si pak <b>přehraješ a sám rozhodneš</b>, jestli ho pošleš. Uvidí ho jen dárce.</li>
+        </ul>
+        ${rx.error ? `<p class="rx-err" role="alert">${esc(rx.error)}</p>` : ""}
+        <div class="rx-choice">
+          <button type="button" class="btn small gold" id="rxOn">Zapnout kameru</button>
+          <button type="button" class="tag-link" id="rxNo">Ne, díky</button>
+        </div>`;
+      $("rxOn").addEventListener("click", e => { e.target.disabled = true; e.target.textContent = "Čekám na povolení…"; rxOn(); });
+      $("rxNo").addEventListener("click", () => { rx.choice = "no"; rx.error = ""; renderRx(); });
+      $("openBtn").textContent = "Rozbalit dárek";
+    }
+    scheduleFit();
+  }
+
+  function rxStart(token) {
+    const secs = meta.askReaction.seconds;
+    const pip = document.createElement("div");
+    pip.className = "rx-pip";
+    pip.innerHTML = `
+      <div class="rx-pip-video"></div>
+      <div class="rx-pip-bar">
+        <span class="rx-live"><i></i><span id="rxTime">0:00</span><small>/ ${R.clock(secs)}</small></span>
+        ${rx.cams.length > 1 || matchMedia("(pointer: coarse)").matches ? `<button type="button" class="rx-btn" id="rxFlip" aria-label="Přepnout kameru" title="Přepnout kameru">${FLIP_ICON}</button>` : ""}
+        <button type="button" class="rx-btn stop" id="rxStop">Hotovo</button>
+      </div>`;
+    document.body.append(pip);
+    pip.firstElementChild.append(rxVideo());
+    rxVideo().play().catch(() => {});
+    rx.pip = pip;
+    rx.comp = R.compose(rxVideo());
+    const tracks = [...(rx.comp ? rx.comp.stream.getVideoTracks() : rx.stream.getVideoTracks()), ...rx.stream.getAudioTracks()];
+    if (!rx.comp) pip.querySelector("#rxFlip")?.remove();          // without the canvas the camera can't change mid-recording
+    try {
+      rx.rec = R.record(new MediaStream(tracks), { kind: "video", maxSeconds: secs, maxBytes: meta.askReaction.bytes,
+        onTick: t => { const el = pip.querySelector("#rxTime"); if (el) el.textContent = R.clock(t); } });
+    } catch { rxEnd(); return; }
+    pip.querySelector("#rxStop").addEventListener("click", () => rx.rec?.stop());
+    pip.querySelector("#rxFlip")?.addEventListener("click", () => rxCamera());
+    rx.rec.done.then(out => { rxEnd(); if (out.blob.size && out.duration >= 1) rxReview(out, token); }).catch(rxEnd);
+    $("rx").hidden = true;
+  }
+  function rxEnd() {
+    rx.comp?.stop(); rx.comp = null;
+    rx.rec = null;
+    rxOff();
+    rx.pip?.remove(); rx.pip = null;
+  }
+  addEventListener("pagehide", () => { rx.comp?.stop(); rxOff(); });
+
+  /** the recipient watches the video and decides: send it to the creator, or throw it away */
+  function rxReview(out, token) {
+    const url = URL.createObjectURL(out.blob);
+    const dlg = document.createElement("dialog");
+    dlg.className = "rx-dlg";
+    dlg.innerHTML = `
+      <div class="rx-dlg-card">
+        <h3>Tvoje video z rozbalování</h3>
+        <video controls playsinline src="${url}"></video>
+        <p class="rx-note" id="rxDlgNote">Zatím ho máš jen ty. Pošleš ho tomu, kdo ti dárek zabalil?</p>
+        <div class="rx-dlg-actions">
+          <button type="button" class="btn small gold" id="rxSend">Poslat video</button>
+          <a class="btn small ghost" id="rxSave" href="${url}" download="rozbalovani.${out.mime.includes("mp4") ? "mp4" : "webm"}">Uložit si ho</a>
+          <button type="button" class="tag-link" id="rxDrop">Zahodit</button>
+        </div>
+      </div>`;
+    document.body.append(dlg);
+    R.fixLength(dlg.querySelector("video"));
+    const close = () => { dlg.close(); dlg.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); };
+    dlg.addEventListener("cancel", e => e.preventDefault());        // Esc mustn't lose the video by accident
+    dlg.querySelector("#rxDrop").addEventListener("click", close);
+    dlg.querySelector("#rxSend").addEventListener("click", async e => {
+      const btn = e.target, note = dlg.querySelector("#rxDlgNote");
+      if (btn.dataset.done) { close(); return; }
+      btn.disabled = true; btn.textContent = "Posílám…";
+      try {
+        const r = await window.XD.fetch(`gifts/${encodeURIComponent(code)}/reaction`, {
+          method: "POST", body: out.blob,
+          headers: { "Content-Type": "application/octet-stream", "X-Gift-Token": token, "X-Media-Duration": String(out.duration) }
+        });
+        if (!r.ok) { const d = await r.json().catch(() => null); throw new Error(d?.message || "Video se nepodařilo odeslat."); }
+        if (meta) meta.askReaction = null;
+        note.textContent = "Odesláno. Dárce bude mít radost!";
+        btn.disabled = false; btn.textContent = "Zavřít"; btn.dataset.done = "1";
+        dlg.querySelector("#rxDrop").remove();
+      } catch (err) {
+        note.textContent = `${err.message} Zkus to znovu, nebo si video ulož.`;
+        btn.disabled = false; btn.textContent = "Poslat znovu";
+      }
+    });
+    dlg.showModal();
   }
 
   /* after everything is unwrapped: invite the recipient to wrap a present of their own */

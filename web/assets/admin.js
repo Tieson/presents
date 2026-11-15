@@ -2,6 +2,7 @@ import "./common.js";
 import "./wrap.js";
 import "./fx.js";
 import "./themes.js";
+import "./rec.js";
 
 /* Ježíškova dílna – admin */
 (function () {
@@ -298,6 +299,7 @@ import "./themes.js";
     $("acctUsage").textContent = `Boxy ${ws.giftCount ?? list.length} z ${L.gifts ?? "?"} · PDF ${formatSize(ws.usedBytes || 0)} z ${formatSize(L.storageBytes || 0)}`;
   }
   $("accountBtn").addEventListener("click", async () => {
+    if (isLocal()) { openSync(); return; }
     try { setWorkshop((await api("workshop")).workshop); } catch (err) { if (err.status === 401) return; }
     fillAccount();
     $("acct").showModal();
@@ -393,6 +395,205 @@ import "./themes.js";
     } catch (err) { if (err.status !== 401) toast(err.message, true); }
   });
 
+  /* ---------- trial workshop: boxes live in this browser until they're saved to an account ---------- */
+  const XDc = window.XD;
+  const isLocal = () => XDc.isLocal();
+  const acctLabel = $("accountBtn").querySelector("span"), acctLabelText = acctLabel.textContent;
+  let barAction = null;
+  function localBar(text, btn, action) {
+    $("localBar").hidden = !text;
+    $("localBarText").textContent = text || "";
+    $("localBarBtn").textContent = btn || "";
+    barAction = action || null;
+  }
+  $("localBarBtn").addEventListener("click", () => barAction?.());
+
+  async function enterLocal() {
+    await XDc.useLocal();
+    document.body.classList.add("is-local");
+    setWorkshop((await rawApi("workshop", { admin: true })).workshop);
+    acctLabel.textContent = "Uložit na účet";
+    localBar("Zkušební dílna: dárky jsou uložené jen v tomhle prohlížeči. Než je někomu pošleš, ulož si je na účet.", "Uložit na účet", () => openSync());
+    await showApp();
+  }
+  function leaveLocalUi() {
+    document.body.classList.remove("is-local");
+    acctLabel.textContent = acctLabelText;
+    localBar("");
+  }
+  $("tryBtn").addEventListener("click", () => busy($("tryBtn"), async () => {
+    $("loginMsg").textContent = "";
+    try { await enterLocal(); }
+    catch { $("loginMsg").textContent = "Zkušební dílnu se nepodařilo otevřít. Prohlížeč nejspíš nedovolil ukládat data (anonymní okno?)."; }
+  }));
+
+  /** Replays the trial boxes and their files against the real API (the server session must exist) */
+  async function transfer(say) {
+    const L = await XDc.loadLocal();
+    const d = await L.dump();
+    const R = (path, o = {}) => rawApi(path, { ...o, admin: true, remote: true });
+    let done = {};
+    try { done = JSON.parse(localStorage.getItem("xd:sync") || "{}") || {}; } catch { /* start over */ }
+    const sent = new Map();
+    async function up(f, headers = {}) {
+      if (!f?.id) return null;
+      if (!sent.has(f.id)) {
+        const blob = await d.file(f.id);
+        if (!blob) sent.set(f.id, null);
+        else {
+          const r = await XDc.fetch("admin/files", {
+            method: "POST", body: blob,
+            headers: { "X-Admin": "1", "Content-Type": "application/octet-stream", "X-File-Name": encodeURIComponent(f.name || "soubor"), ...headers }
+          }, { remote: true });
+          const data = await r.json().catch(() => null);
+          if (!r.ok) throw new Error(data?.message || `Soubor „${f.name}“ se nepodařilo nahrát.`);
+          sent.set(f.id, { id: data.id });
+        }
+      }
+      return sent.get(f.id);
+    }
+    let n = 0;
+    for (const g of d.gifts) {
+      n++;
+      if (done[g.code]) continue;
+      say(`Ukládám dárek ${n} z ${d.gifts.length}…`);
+      const items = [];
+      for (const it of g.items || []) items.push({ id: it.id, name: it.name, description: it.description, file: await up(it.file) });
+      const pf = g.photo?.file ? await up(g.photo.file, { "X-Image-Width": String(g.photo.file.w || ""), "X-Image-Height": String(g.photo.file.h || "") }) : null;
+      const cf = g.clip?.file ? await up(g.clip.file, { "X-Media-Kind": g.clip.kind || "video", "X-Media-Duration": String(g.clip.duration || "") }) : null;
+      const made = await R("admin/gifts", { method: "POST", body: { title: g.title, openAt: g.openAt, theme: g.theme, appearance: g.appearance, reveal: g.reveal } });
+      try {
+        await R(`admin/gifts/${made.code}`, { method: "PUT", body: {
+          title: g.title, showTitle: g.showTitle, message: g.message, signature: g.signature,
+          anytime: g.anytime, manualUnlock: g.manualUnlock, openAt: g.openAt,
+          appearance: g.appearance, reveal: g.reveal, theme: g.theme, items,
+          photo: pf ? { file: pf, caption: g.photo.caption, frame: g.photo.frame } : null,
+          clip: cf ? { file: cf } : null,
+          askReaction: !!g.askReaction,
+          ...(g.password ? { password: g.password } : {})
+        } });
+      } catch (err) {
+        try { await R(`admin/gifts/${made.code}`, { method: "DELETE" }); } catch { /* ignore */ }
+        throw err;
+      }
+      done[g.code] = made.code;
+      try { localStorage.setItem("xd:sync", JSON.stringify(done)); } catch { /* ignore */ }
+    }
+    try { localStorage.removeItem("xd:sync"); } catch { /* ignore */ }
+    await L.clear();
+    XDc.leaveLocal(true);
+    return d.gifts.length;
+  }
+
+  let syncWs = null;      // the server workshop once it exists (so a failed transfer can be retried)
+  let syncNew = null;     // …and the answer to creating it (its secret link is shown once)
+  let syncBusy = false;
+  const syncSay = (text, isError = false) => { $("syncMsg").textContent = text; $("syncMsg").classList.toggle("error", isError); };
+  function syncMode(key) {
+    $("syncForm").hidden = key;
+    $("syncKeyForm").hidden = !key;
+    $("syncSwitch").textContent = key ? "Účet ještě nemám" : "Už účet mám";
+  }
+  function openSync(why = "") {
+    if (isDirty()) { toast("Nejdřív ulož rozdělaný box tlačítkem Uložit.", true); return; }
+    $("syncTitle").textContent = why === "share" ? "Ke sdílení je potřeba účet" : "Uložit na účet";
+    $("syncLead").textContent = `${why === "share" ? "Dárek je zatím jen v tomhle prohlížeči, takže by ho nikdo jiný neotevřel. " : ""}Založ si účet a ${list.length ? `${list.length === 1 ? "tvůj dárek se uloží" : "tvoje dárky se uloží"} na server` : "dílna se uloží na server"}. Pak půjdou sdílet a dostaneš se k nim odkudkoli.`;
+    $("sEmailHint").textContent = info.mail ? "Pošleme ti na něj odkaz, kterým se do dílny přihlásíš z jakéhokoli zařízení. Heslo není potřeba."
+      : "Nepovinný. Odkaz, kterým se do dílny přihlásíš, ti ukážeme hned po uložení.";
+    $("sCodeWrap").hidden = !info.signupCode;
+    if (!$("sName").value && ws && ws.name !== "Zkušební dílna") $("sName").value = ws.name;
+    syncMode(false);
+    syncSay(syncWs ? "Účet už je založený, zbývá přenést dárky." : "");
+    $("syncDlg").showModal();
+  }
+  $("syncClose").addEventListener("click", () => { if (!syncBusy) $("syncDlg").close(); });
+  $("syncDlg").addEventListener("cancel", e => { if (syncBusy) e.preventDefault(); });
+  $("syncSwitch").addEventListener("click", () => syncMode($("syncKeyForm").hidden));
+
+  async function runSync(signIn) {
+    if (syncBusy) return;
+    syncBusy = true;
+    for (const b of [$("syncGo"), $("syncKeyGo"), $("syncSwitch"), $("syncDrop")]) b.disabled = true;
+    try {
+      if (!syncWs) { syncSay("Připravuju účet…"); syncWs = await signIn(); }
+      const n = await transfer(syncSay);
+      const created = syncNew;
+      syncWs = syncNew = null;
+      $("syncDlg").close();
+      leaveLocalUi();
+      cur = draft = null; snapshot = "";
+      setWorkshop((await rawApi("workshop", { admin: true })).workshop);
+      if (created) {
+        $("createdLink").textContent = linkFor(created.workshop.key);
+        $("createdMailed").hidden = !created.mailed;
+        if (created.mailed) $("createdMailed").textContent = `Odkaz jsme ti poslali i na ${created.workshop.email}. Kdyby nedorazil, mrkni do spamu. I tak si ho radši ulož.`;
+        $("createdSaved").checked = false;
+        $("createdGo").disabled = true;
+        showScreen("created");
+        window.XDfx?.burst(innerWidth / 2, innerHeight * .3, 120);
+      } else {
+        await showApp();
+      }
+      toast(n ? `Hotovo: ${n} ${plural(n, "dárek je", "dárky jsou", "dárků je")} uložených na účtu` : "Dílna je uložená na účtu");
+    } catch (err) {
+      if (err.code === "bad_signup_code") {
+        $("sCodeWrap").hidden = false; $("sCode").focus();
+        syncSay("Zakládání dílen je tady jen pro pozvané. Zadej kód pro založení.", true);
+      } else {
+        syncSay(`${err.message}${syncWs ? " Účet už máš založený, stačí to zkusit znovu." : ""}`, true);
+      }
+    } finally {
+      syncBusy = false;
+      for (const b of [$("syncGo"), $("syncKeyGo"), $("syncSwitch"), $("syncDrop")]) b.disabled = false;
+    }
+  }
+  $("syncForm").addEventListener("submit", e => {
+    e.preventDefault();
+    const email = $("sEmail").value.trim();
+    if (!syncWs && info.mail && !email) { syncSay("Napiš e-mail, na který ti pošleme odkaz do dílny.", true); $("sEmail").focus(); return; }
+    runSync(async () => {
+      const body = { name: $("sName").value, email, theme: ws?.theme };
+      if (!$("sCodeWrap").hidden) body.signupCode = $("sCode").value;
+      syncNew = await rawApi("workshop", { method: "POST", admin: true, remote: true, body });
+      return syncNew.workshop;
+    });
+  });
+  $("syncKeyForm").addEventListener("submit", e => {
+    e.preventDefault();
+    const key = keyFrom($("sKey").value);
+    if (!syncWs && !key) { syncSay("Tohle nevypadá jako odkaz do dílny. Vlož celý odkaz, který končí #klic=…", true); return; }
+    runSync(async () => (await rawApi("workshop/login", { method: "POST", admin: true, remote: true, body: { key } })).workshop);
+  });
+  $("syncDrop").addEventListener("click", async () => {
+    if (!(await confirmDialog({ title: "Zahodit zkušební dárky?", text: "Smažou se z tohohle prohlížeče a nepůjdou vrátit.", ok: "Zahodit" }))) return;
+    try { await (await XDc.loadLocal()).clear(); } catch { /* ignore */ }
+    XDc.leaveLocal(true);
+    try { localStorage.removeItem("xd:sync"); } catch { /* ignore */ }
+    $("syncDlg").close();
+    leaveLocalUi();
+    showLogin("Zkušební dárky jsou smazané.");
+  });
+
+  /** Signed in on the server, but trial boxes are still waiting in this browser: offer to bring them over */
+  async function offerLeftovers() {
+    if (!XDc.localMarked() || isLocal()) return;
+    try {
+      const L = await XDc.loadLocal();
+      const n = (await L.dump()).gifts.length;
+      if (!n) { await L.clear(); XDc.leaveLocal(true); return; }
+      localBar(`V tomhle prohlížeči ${plural(n, "zůstal", "zůstaly", "zůstalo")} ${n} ${plural(n, "zkušební dárek", "zkušební dárky", "zkušebních dárků")}, které nejsou uložené na účtu.`, "Přenést do dílny", async () => {
+        $("localBarBtn").disabled = true;
+        try {
+          const k = await transfer(text => { $("localBarText").textContent = text; });
+          localBar("");
+          await loadList();
+          toast(`Přeneseno: ${k} ${plural(k, "dárek", "dárky", "dárků")}`);
+        } catch (err) { toast(err.message, true); offerLeftovers(); }
+        finally { $("localBarBtn").disabled = false; }
+      });
+    } catch { /* the browser storage is gone: nothing to offer */ }
+  }
+
   /* ---------- app ---------- */
   async function showApp() {
     showScreen("app");
@@ -452,6 +653,7 @@ import "./themes.js";
             ${seen}
             <span class="flag">${g.hasPassword ? "s heslem" : "bez hesla"}</span>
             ${g.showTitle ? "" : `<span class="flag">název skrytý</span>`}
+            ${g.hasReaction ? `<span class="flag unwrapped" title="Obdarovaný poslal video z rozbalování">▶ video z rozbalování</span>` : ""}
           </span>
         </button>
       </li>`;
@@ -464,6 +666,7 @@ import "./themes.js";
   });
 
   function showEmptyEditor() {
+    stopClipCapture();
     cur = null; draft = null; snapshot = "";
     applyTheme(restTheme());
     $("editor").hidden = true;
@@ -498,7 +701,9 @@ import "./themes.js";
       appearance: W.normalize(g.appearance), reveal: W.REVEALS[g.reveal] ? g.reveal : "all",
       items: g.items.map(i => ({ id: i.id, name: i.name, description: i.description, file: i.file ? { ...i.file } : null })),
       photo: g.photo ? { file: { ...g.photo.file }, caption: g.photo.caption || "", frame: g.photo.frame || "polaroid" } : null,
-      theme: TH.keyOf(g.theme), recipientEmail: g.recipientEmail || ""
+      theme: TH.keyOf(g.theme), recipientEmail: g.recipientEmail || "",
+      clip: g.clip ? { ...g.clip, file: { ...g.clip.file } } : null,
+      askReaction: !!g.askReaction
     };
   }
 
@@ -518,6 +723,7 @@ import "./themes.js";
     applyTheme(draft.theme);
     pw = { on: g.hasPassword, editing: !g.hasPassword, value: "" };
     for (const k in uploads) delete uploads[k];
+    stopClipCapture();
     fillForm();
     renderItems();
     snapshot = serialize();
@@ -569,6 +775,9 @@ import "./themes.js";
     renderLook();
     photoUpload = null;
     renderPhoto();
+    clipState = null; renderClip();
+    $("fAskReaction").checked = !!draft.askReaction;
+    renderReaction();
     $("fPwOn").checked = pw.on;
     $("fPw").value = "";
     $("fPw").classList.remove("invalid");
@@ -625,6 +834,187 @@ import "./themes.js";
       : "Posílání e-mailů zatím není na serveru zapnuté. Adresa se uloží a použije, až ho zapneš.";
   }
   $("fRecipientEmail").addEventListener("input", e => { draft.recipientEmail = e.target.value; updateDirty(); });
+
+  /* ---------- voice / video message (max 30 s): record here or pick a file ---------- */
+  const R = window.XDrec;
+  const MIC = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>`;
+  const CAM = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6.5" width="12.5" height="11" rx="2"/><path d="M15.5 10.5l5-3v9l-5-3z"/></svg>`;
+  const FILE = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4M7.5 8.5L12 4l4.5 4.5"/><path d="M5 14v4.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V14"/></svg>`;
+  let clipState = null;      // null | { busy, mode: "lead"|"rec"|"upload", kind, stream, rec } | { error }
+  let clipUrl = null, clipUrlFor = null;
+  const clipMax = () => ws?.limits?.clipSeconds || 30;
+
+  function stopClipCapture() {
+    if (clipState?.rec) { clipState.cancelled = true; clipState.rec.stop(); }
+    clearInterval(clipState?.lead);
+    R.stopStream(clipState?.stream);
+  }
+  async function startClip(kind) {
+    if (!R.supported(kind)) { clipState = { error: "Tenhle prohlížeč nahrávat neumí. Vyber hotový soubor." }; renderClip(); return; }
+    let stream;
+    try { stream = await R.open({ video: kind === "video", audio: true }); }
+    catch (err) { clipState = { error: R.explain(err, kind === "video" ? "kameře a mikrofonu" : "mikrofonu") }; renderClip(); return; }
+    const code = cur.code;
+    clipState = { busy: true, mode: "lead", kind, stream, n: 3 };
+    renderClip(); updateDirty();
+    clipState.lead = setInterval(() => {
+      if (!clipState || cur?.code !== code) return;
+      if (--clipState.n > 0) { $("clipLead").textContent = clipState.n; return; }
+      clearInterval(clipState.lead);
+      const st = clipState;
+      st.mode = "rec";
+      st.rec = R.record(stream, { kind, maxSeconds: clipMax(), maxBytes: ws.limits.uploadBytes, onTick: el => {
+        const left = Math.max(0, Math.ceil(clipMax() - el));
+        for (const id of ["clipLeft", "clipLeft2"]) { const t = $(id); if (t) t.textContent = left; }
+        const ring = $("clipRing"); if (ring) ring.style.setProperty("--p", el / clipMax());
+      } });
+      renderClip();
+      st.rec.done.then(out => {
+        R.stopStream(stream);
+        if (st.cancelled || clipState !== st) return;
+        uploadClip(out.blob, kind, out.duration, kind === "audio" ? "hlasový vzkaz" : "video vzkaz");
+      }).catch(() => { R.stopStream(stream); clipState = { error: "Nahrávání se přerušilo. Zkus to znovu." }; renderClip(); updateDirty(); });
+    }, 800);
+  }
+  async function pickClip(file) {
+    if (!file) return;
+    const kind = file.type.startsWith("audio/") ? "audio" : "video";
+    if (file.size > ws.limits.uploadBytes) { clipState = { error: `Soubor má ${formatSize(file.size)}, nejvíc jde ${formatSize(ws.limits.uploadBytes)}. Zkus ho natočit přímo tady, vyjde menší.` }; renderClip(); return; }
+    const d = await R.durationOf(file, kind);
+    if (d && d > clipMax() + 1) { clipState = { error: `Vzkaz má ${Math.round(d)} s, nejvíc jde ${clipMax()} s.` }; renderClip(); return; }
+    uploadClip(file, kind, d || 0, file.name);
+  }
+  function uploadClip(blob, kind, duration, name) {
+    const code = cur.code;
+    clipState = { busy: true, mode: "upload", progress: 0 };
+    renderClip(); updateDirty();
+    const xhr = window.XD.xhr();
+    xhr.open("POST", "api/admin/files");
+    xhr.setRequestHeader("X-Admin", "1");
+    xhr.setRequestHeader("X-File-Name", encodeURIComponent(name));
+    xhr.setRequestHeader("X-Media-Kind", kind);
+    xhr.setRequestHeader("X-Media-Duration", String(duration || 0));
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.upload.onprogress = e => { const bar = document.querySelector("#clipArea .progress i"); if (bar && e.lengthComputable) bar.style.width = `${Math.round(e.loaded / e.total * 100)}%`; };
+    xhr.onload = () => {
+      let data = null;
+      try { data = JSON.parse(xhr.responseText); } catch { /* not json */ }
+      if (cur?.code !== code) return;
+      if (xhr.status === 201 && data?.id) {
+        clipState = null;
+        draft.clip = { file: { id: data.id, name: data.name, size: data.size, type: data.type }, kind: data.type.startsWith("audio/") ? "audio" : "video", duration: data.duration };
+        if (clipUrl) URL.revokeObjectURL(clipUrl);
+        clipUrl = URL.createObjectURL(blob); clipUrlFor = data.id;
+      } else if (xhr.status === 401) { clipState = null; showLogin("Přihlášení tady už neplatí. Otevři dílnu svým tajným odkazem."); }
+      else clipState = { error: data?.message || `Nahrání se nepovedlo (chyba ${xhr.status}).` };
+      renderClip(); updateDirty();
+    };
+    xhr.onerror = () => { clipState = { error: "Nahrání se nepovedlo. Zkontroluj připojení." }; renderClip(); updateDirty(); };
+    xhr.send(blob);
+  }
+  /** the saved recording as a blob URL (works in every browser, no streaming needed) */
+  async function mediaUrl(path) {
+    const r = await window.XD.fetch(path, { headers: { "X-Admin": "1" } });
+    if (!r.ok) throw new Error("media");
+    return URL.createObjectURL(await r.blob());
+  }
+  function player(kind, url) {
+    return kind === "audio" ? `<audio controls preload="metadata" src="${url}"></audio>` : `<video controls playsinline preload="metadata" src="${url}"></video>`;
+  }
+  function renderClip() {
+    const area = $("clipArea");
+    $("clipMax").textContent = clipMax();
+    const st = clipState;
+    if (st?.busy && st.mode === "upload") {
+      area.innerHTML = `<div class="photo-drop busy"><span>Ukládám vzkaz…</span><span class="progress"><i style="width:0%"></i></span></div>`;
+      return;
+    }
+    if (st?.busy) {
+      area.innerHTML = `
+        <div class="clip-rec ${st.kind}">
+          ${st.kind === "video" ? `<video id="clipLive" autoplay muted playsinline></video>` : `<div class="clip-mic">${MIC}</div>`}
+          <div class="clip-rec-bar">
+            ${st.mode === "lead"
+              ? `<span class="clip-lead">Začínáme za <b id="clipLead">${st.n}</b></span>`
+              : `<span class="clip-ring" id="clipRing"><b id="clipLeft">${clipMax()}</b></span><span class="clip-live"><i></i>Nahrávám, zbývá&nbsp;<b id="clipLeft2">${clipMax()}</b>&nbsp;s</span>`}
+            <button type="button" class="btn small gold" id="clipStop">${st.mode === "lead" ? "Zrušit" : "Hotovo"}</button>
+            ${st.mode === "rec" ? `<button type="button" class="chip" id="clipCancel">Zahodit</button>` : ""}
+          </div>
+        </div>`;
+      if (st.kind === "video") $("clipLive").srcObject = st.stream;
+      $("clipStop").addEventListener("click", () => {
+        if (st.mode === "lead") { stopClipCapture(); clipState = null; renderClip(); updateDirty(); }
+        else st.rec.stop();
+      });
+      $("clipCancel")?.addEventListener("click", () => { stopClipCapture(); clipState = null; renderClip(); updateDirty(); });
+      return;
+    }
+    const err = st?.error ? `<p class="photo-err" role="alert">${esc(st.error)}</p>` : "";
+    if (!draft.clip) {
+      area.innerHTML = `
+        <div class="clip-start">
+          <button type="button" class="clip-opt" data-rec="audio">${MIC}<b>Namluvit</b><small>jen hlas</small></button>
+          <button type="button" class="clip-opt" data-rec="video">${CAM}<b>Natočit</b><small>video se zvukem</small></button>
+          <button type="button" class="clip-opt" data-rec="file">${FILE}<b>Vybrat soubor</b><small>zvuk nebo video</small></button>
+        </div>${err}`;
+      area.querySelectorAll("[data-rec]").forEach(b => b.addEventListener("click", () => {
+        if (b.dataset.rec === "file") { $("clipInput").value = ""; $("clipInput").click(); }
+        else startClip(b.dataset.rec);
+      }));
+      return;
+    }
+    const c = draft.clip;
+    area.innerHTML = `
+      <div class="clip-have ${c.kind}">
+        <div class="clip-player" id="clipPlayer"><span class="hint">Načítám vzkaz…</span></div>
+        <div class="clip-meta">
+          <span>${c.kind === "audio" ? MIC : CAM}<b>${c.kind === "audio" ? "Hlasový vzkaz" : "Video vzkaz"}</b>${c.duration ? ` · ${R.clock(c.duration)}` : ""} · ${formatSize(c.file.size)}</span>
+          <button type="button" class="chip" id="clipRemove">Odebrat</button>
+        </div>
+      </div>${err}`;
+    $("clipRemove").addEventListener("click", () => { draft.clip = null; clipState = null; renderClip(); updateDirty(); });
+    const show = url => { const p = $("clipPlayer"); if (!p || draft.clip?.file.id !== c.file.id) return; p.innerHTML = player(c.kind, url); R.fixLength(p.firstElementChild); };
+    if (clipUrlFor === c.file.id && clipUrl) show(clipUrl);
+    else mediaUrl(`admin/files/${encodeURIComponent(c.file.id)}`).then(url => { if (clipUrl) URL.revokeObjectURL(clipUrl); clipUrl = url; clipUrlFor = c.file.id; show(url); })
+      .catch(() => { const p = $("clipPlayer"); if (p) p.innerHTML = `<span class="hint">Vzkaz se nepodařilo načíst.</span>`; });
+  }
+  $("clipInput").addEventListener("change", e => pickClip(e.target.files[0]));
+
+  /* ---------- the recipient's unwrapping video ---------- */
+  let reactionUrl = null, reactionUrlFor = null;
+  $("fAskReaction").addEventListener("change", e => { draft.askReaction = e.target.checked; updateDirty(); });
+  function renderReaction() {
+    const area = $("reactionArea"), r = cur.reaction;
+    area.hidden = !r;
+    if (!r) { area.innerHTML = ""; return; }
+    area.innerHTML = `
+      <div class="reaction">
+        <div class="reaction-head"><b>Video z rozbalování</b><span>${esc(formatShort(r.at))}${r.duration ? ` · ${R.clock(r.duration)}` : ""} · ${formatSize(r.file.size)}</span></div>
+        <div class="clip-player" id="reactionPlayer"><button type="button" class="btn small gold" id="reactionPlay">Přehrát video</button></div>
+        <div class="reaction-actions">
+          <a class="chip" id="reactionSave" hidden download="rozbalovani-${esc(cur.code)}.${r.file.type.includes("mp4") ? "mp4" : "webm"}">Stáhnout</a>
+          <button type="button" class="chip" id="reactionDelete">Smazat video</button>
+        </div>
+      </div>`;
+    const show = url => {
+      const p = $("reactionPlayer"); if (!p) return;
+      p.innerHTML = player("video", url); R.fixLength(p.firstElementChild);
+      $("reactionSave").href = url; $("reactionSave").hidden = false;
+    };
+    const load = () => mediaUrl(`admin/gifts/${encodeURIComponent(cur.code)}/reaction`).then(url => { if (reactionUrl) URL.revokeObjectURL(reactionUrl); reactionUrl = url; reactionUrlFor = r.file.id; show(url); })
+      .catch(() => toast("Video se nepodařilo načíst.", true));
+    if (reactionUrlFor === r.file.id && reactionUrl) show(reactionUrl);
+    else $("reactionPlay").addEventListener("click", e => { e.target.disabled = true; e.target.textContent = "Načítám…"; load(); });
+    $("reactionDelete").addEventListener("click", async () => {
+      if (!(await confirmDialog({ title: "Smazat video z rozbalování?", text: "Video se smaže natrvalo. Obdarovaný ho může natočit znovu, když dárek zabalí a rozbalí.", ok: "Smazat video" }))) return;
+      try {
+        await api(`admin/gifts/${encodeURIComponent(cur.code)}/reaction`, { method: "DELETE" });
+        cur.reaction = null;
+        renderReaction(); updateDirty(); loadList();
+        toast("Video smazáno");
+      } catch (err) { if (err.status !== 401) toast(err.message, true); }
+    });
+  }
 
   /* who looked: views and unwraps (the creator's own visits don't count) */
   function renderStats() {
@@ -819,10 +1209,17 @@ import "./themes.js";
     renderLook(); updateDirty();
     $("inkPicker").querySelector(`[data-k="${next}"]`)?.focus();
   });
+  let opacityTick = 0;
   $("fOpacity").addEventListener("input", () => {
     if (!draft) return;
-    draft.appearance.patternOpacity = Number($("fOpacity").value);
-    renderLook(); updateDirty();
+    const v = Number($("fOpacity").value);
+    draft.appearance.patternOpacity = v;
+    $("opacityOut").textContent = `${v} %`;
+    $("fOpacity").style.setProperty("--fill", `${(v - W.OPACITY.min) / (W.OPACITY.max - W.OPACITY.min) * 100}%`);
+    updateDirty();
+    // swap the previews only once the new tile is decoded, skipping steps the slider has already passed
+    const id = ++opacityTick;
+    W.ready(draft.appearance).then(() => { if (id === opacityTick && draft) renderLook(); });
   });
 
   /* bow + decoration */
@@ -926,7 +1323,7 @@ import "./themes.js";
     let img;
     try { img = await shrinkImage(file); }
     catch (err) { photoUpload = { error: err.message }; renderPhoto(); updateDirty(); return; }
-    const xhr = new XMLHttpRequest();
+    const xhr = window.XD.xhr();
     xhr.open("POST", "api/admin/files");
     xhr.setRequestHeader("X-Admin", "1");
     xhr.setRequestHeader("X-File-Name", encodeURIComponent(file.name.replace(/\.[^.]+$/, "") + ".jpg"));
@@ -1255,7 +1652,7 @@ import "./themes.js";
     renderFileSlot(slot, item);
     updateDirty();
 
-    const xhr = new XMLHttpRequest();
+    const xhr = window.XD.xhr();
     xhr.open("POST", "api/admin/files");
     xhr.setRequestHeader("X-Admin", "1");
     xhr.setRequestHeader("X-File-Name", encodeURIComponent(file.name));
@@ -1296,6 +1693,7 @@ import "./themes.js";
   function readyToSend() {
     if (Object.values(uploads).some(u => !u.error)) { toast("Počkej, až se PDF nahraje.", true); return false; }
     if (photoUpload && !photoUpload.error) { toast("Počkej, až se fotka nahraje.", true); return false; }
+    if (clipState?.busy) { toast("Nejdřív dokonči nahrávání vzkazu.", true); return false; }
     if (pw.on && !cur.hasPassword && !pw.value) {
       $("fPw").classList.add("invalid");
       $("fPw").focus();
@@ -1320,6 +1718,8 @@ import "./themes.js";
       reveal: draft.reveal,
       items: draft.items.map(i => ({ id: i.id, name: i.name.trim(), description: i.description.trim(), file: i.file ? { id: i.file.id } : null })),
       photo: draft.photo ? { file: { id: draft.photo.file.id }, caption: draft.photo.caption.trim(), frame: draft.photo.frame } : null,
+      clip: draft.clip ? { file: { id: draft.clip.file.id } } : null,
+      askReaction: !!draft.askReaction,
       theme: draft.theme,
       recipientEmail: draft.recipientEmail.trim()
     };
@@ -1411,6 +1811,7 @@ import "./themes.js";
   }
   function openShare() {
     if (!cur) return;
+    if (isLocal()) { openSync("share"); return; }
     const st = statusOf(cur);
     $("shareCode").textContent = cur.code;
     $("shareUrl").textContent = giftUrl();
@@ -1504,8 +1905,13 @@ import "./themes.js";
     if (wantNew) history.replaceState(null, "", location.pathname + location.search);
     try {
       setWorkshop((await rawApi("workshop", { admin: true })).workshop);
-      showApp();
+      await showApp();
+      offerLeftovers();
     } catch (err) {
+      // not signed in (or no working server at all): a trial workshop started earlier opens straight away
+      if (XDc.localMarked() && !wantNew) {
+        try { if (await (await XDc.loadLocal()).exists()) { await enterLocal(); return; } } catch { /* fall through to the welcome screen */ }
+      }
       showLogin(err.status === 401 ? "" : err.message);
       if (wantNew && err.status === 401) setTimeout(() => $("cName").focus({ preventScroll: true }), 60);
     }

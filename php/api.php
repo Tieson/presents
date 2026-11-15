@@ -152,8 +152,24 @@ function sniff_type(string $buf): ?string {
     if (substr($buf, 0, 3) === "\xFF\xD8\xFF") return 'image/jpeg';
     if (substr($buf, 0, 8) === "\x89PNG\r\n\x1A\n") return 'image/png';
     if (substr($buf, 0, 4) === 'RIFF' && substr($buf, 8, 4) === 'WEBP') return 'image/webp';
+    // sound and video: the container says nothing about what's inside, the uploader's hint picks audio/ or video/
+    if (substr($buf, 0, 4) === "\x1A\x45\xDF\xA3") return 'media/webm';
+    if (substr($buf, 4, 4) === 'ftyp') return 'media/mp4';
+    if (substr($buf, 0, 4) === 'OggS') return 'audio/ogg';
+    if (substr($buf, 0, 3) === 'ID3' || (strlen($buf) > 1 && $buf[0] === "\xFF" && (ord($buf[1]) & 0xE0) === 0xE0)) return 'audio/mpeg';
+    if (substr($buf, 0, 4) === 'RIFF' && substr($buf, 8, 4) === 'WAVE') return 'audio/wav';
     return null;
 }
+const CLIP_SECONDS = 30;       // the creator's voice / video message
+const REACTION_SECONDS = 60;   // the recipient's unwrapping video
+/** sniffed type + the uploader's hint → the final media type, or null when it isn't sound/video */
+function media_type(?string $sniffed, $kind): ?string {
+    if (!$sniffed) return null;
+    if (strpos($sniffed, 'media/') === 0) return ($kind === 'audio' ? 'audio' : 'video') . '/' . substr($sniffed, 6);
+    return strpos($sniffed, 'audio/') === 0 ? $sniffed : null;
+}
+function is_media(?array $m): bool { return (bool) preg_match('#^(audio|video)/#', file_type($m)); }
+function media_seconds($v, int $max): ?float { $n = round((float) $v, 1); return $n > 0 ? min($n, $max) : null; }
 function file_type(?array $m): string { return (string) ($m['type'] ?? 'application/pdf'); }
 
 function sanitize_appearance($a): array {
@@ -179,6 +195,8 @@ function files_of(array $g): array {
     $out = [];
     foreach ($g['items'] as $i) if (!empty($i['file'])) $out[] = $i['file'];
     if (!empty($g['photo']['file'])) $out[] = $g['photo']['file'];
+    if (!empty($g['clip']['file'])) $out[] = $g['clip']['file'];
+    if (!empty($g['reaction']['file'])) $out[] = $g['reaction']['file'];
     return $out;
 }
 function with_defaults(?array $g): ?array {
@@ -186,6 +204,9 @@ function with_defaults(?array $g): ?array {
     $g['appearance'] = sanitize_appearance($g['appearance'] ?? null);
     $g['reveal'] = in_array($g['reveal'] ?? null, REVEALS, true) ? $g['reveal'] : 'all';
     $g['photo'] = $g['photo'] ?? null;
+    $g['clip'] = $g['clip'] ?? null;
+    $g['reaction'] = $g['reaction'] ?? null;
+    $g['askReaction'] = !empty($g['askReaction']);
     $g['theme'] = theme_of($g['theme'] ?? null, 'christmas');
     return $g;
 }
@@ -311,6 +332,7 @@ function summary(array $g): array {
         'manualUnlock' => (bool) $g['manualUnlock'], 'locked' => is_locked($g),
         'appearance' => $g['appearance'], 'reveal' => $g['reveal'], 'theme' => $g['theme'],
         'itemCount' => count($g['items']), 'fileCount' => $files, 'hasPhoto' => !empty($g['photo']),
+        'hasClip' => !empty($g['clip']), 'hasReaction' => !empty($g['reaction']),
         'createdAt' => $g['createdAt'], 'updatedAt' => $g['updatedAt'],
     ];
 }
@@ -334,6 +356,8 @@ function public_gift(array $g): array {
             'caption' => $g['photo']['caption'], 'frame' => $g['photo']['frame'],
             'w' => $g['photo']['file']['w'] ?? null, 'h' => $g['photo']['file']['h'] ?? null,
         ] : null,
+        // the recording itself comes from gifts/<code>/clip?t=<token>
+        'clip' => !empty($g['clip']) ? ['kind' => $g['clip']['kind'], 'duration' => $g['clip']['duration'] ?? null] : null,
     ];
 }
 function gift_scope(array $g): string {
@@ -343,6 +367,19 @@ function send_image(array $m): void {
     global $FILES;
     $path = "$FILES/{$m['id']}.pdf";       // every upload keeps the .pdf name, `type` says what it is
     if (!safe_name($m['id']) || !is_file($path) || !in_array(file_type($m), IMAGE_TYPES, true)) fail(404, 'not_found', 'Fotka nenalezena.');
+    header('Content-Type: ' . file_type($m));
+    header('Content-Length: ' . filesize($path));
+    header('Content-Disposition: inline');
+    header('Cache-Control: private, no-store');
+    header('X-Content-Type-Options: nosniff');
+    header("Content-Security-Policy: default-src 'none'; sandbox");
+    readfile($path);
+    exit;
+}
+function send_media(?array $m, string $what): void {
+    global $FILES;
+    $path = $m ? "$FILES/{$m['id']}.pdf" : '';
+    if (!$m || !safe_name($m['id']) || !is_file($path) || !is_media($m)) fail(404, 'not_found', "$what nenalezen" . ($what === 'Video' ? 'o.' : '.'));
     header('Content-Type: ' . file_type($m));
     header('Content-Length: ' . filesize($path));
     header('Content-Disposition: inline');
@@ -404,7 +441,7 @@ function workshop_view(array $w, ?string $key = null): array {
         'createdAt' => $w['createdAt'],
         'giftCount' => count(gifts_by_owner($w['id'])),
         'usedBytes' => (int) ($w['usedBytes'] ?? 0),
-        'limits' => ['gifts' => $MAX_GIFTS, 'storageBytes' => $MAX_STORAGE, 'uploadBytes' => $MAX_UPLOAD],
+        'limits' => ['gifts' => $MAX_GIFTS, 'storageBytes' => $MAX_STORAGE, 'uploadBytes' => $MAX_UPLOAD, 'clipSeconds' => CLIP_SECONDS],
     ];
 }
 function clean_name($v): string { return trim((string) preg_replace('/\s+/u', ' ', s($v, 80))); }
@@ -844,6 +881,20 @@ function sanitize_photo($raw, ?array $prev, string $owner): ?array {
     ];
 }
 
+/** The creator's voice or video message: a recording this workshop uploaded */
+function sanitize_clip($raw, ?array $prev, string $owner): ?array {
+    if (!is_array($raw) || empty($raw['file']['id'])) return null;
+    $fid = (string) $raw['file']['id'];
+    if (($prev['file']['id'] ?? null) === $fid) return $prev;
+    $m = file_meta($fid);
+    if (!$m || ($m['owner'] ?? null) !== $owner || !is_media($m)) return null;
+    return [
+        'file' => ['id' => $m['id'], 'name' => $m['name'], 'size' => $m['size'], 'type' => $m['type']],
+        'kind' => strpos($m['type'], 'audio/') === 0 ? 'audio' : 'video',
+        'duration' => media_seconds($m['duration'] ?? 0, CLIP_SECONDS),
+    ];
+}
+
 /* ---------- request ---------- */
 
 if (strlen($SECRET) < 16) fail(500, 'not_configured', 'Chybí APP_SECRET v config.php (aspoň 16 znaků). Podepisuje přihlášení a šifruje odkazy do dílen.');
@@ -904,6 +955,7 @@ try {
                 'openAt' => $g['anytime'] ? null : $g['openAt'],
                 'ringAt' => $g['ringAt'] ?? null,
                 'owner' => $owner,
+                'askReaction' => $g['askReaction'] && !$g['reaction'] ? ['seconds' => REACTION_SECONDS, 'bytes' => $MAX_UPLOAD] : null,
                 'serverNow' => now_iso(),
             ]);
         }
@@ -939,6 +991,41 @@ try {
             $m = !empty($g['photo']['file']['id']) ? file_meta($g['photo']['file']['id']) : null;
             if (!$m) fail(404, 'not_found', 'Fotka nenalezena.');
             send_image($m);
+        }
+        if (count($seg) === 3 && $seg[2] === 'clip' && $method === 'GET') {
+            if (!$isOwner()) {
+                if (!check_token($SECRET, gift_scope($g), $_GET['t'] ?? null)) fail(401, 'bad_token', 'Platnost odkazu vypršela. Otevři dárek znovu.');
+                if (is_locked($g)) fail(423, 'locked', 'Dárek ještě nejde rozbalit.');
+            }
+            send_media(!empty($g['clip']['file']['id']) ? file_meta($g['clip']['file']['id']) : null, 'Vzkaz');
+        }
+        // the recipient's unwrapping video: only when the creator asked for it, only from someone who unwrapped the box
+        if (count($seg) === 3 && $seg[2] === 'reaction' && $method === 'POST') {
+            if (!$g['askReaction']) fail(403, 'not_wanted', 'U tohohle dárku se reakce nenahrává.');
+            if (!check_token($SECRET, gift_scope($g), $_SERVER['HTTP_X_GIFT_TOKEN'] ?? null)) fail(401, 'bad_token', 'Platnost odkazu vypršela. Otevři dárek znovu.');
+            $mb = $MB($MAX_UPLOAD);
+            if ((int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > $MAX_UPLOAD) fail(413, 'too_large', "Nahrávka je větší než $mb MB.");
+            $buf = (string) file_get_contents('php://input');
+            if (strlen($buf) > $MAX_UPLOAD || $buf === '') fail(413, 'too_large', "Nahrávka je větší než $mb MB.");
+            $type = media_type(sniff_type($buf), 'video');
+            if (!$type || strpos($type, 'video/') !== 0) fail(415, 'bad_type', 'Tohle není video.');
+            $owner = get_workshop($g['owner']);
+            if (!$owner) fail(404, 'not_found', 'Dárek nenalezen.');
+            $old = $g['reaction']['file'] ?? null;
+            if ((int) ($owner['usedBytes'] ?? 0) - (int) ($old['size'] ?? 0) + strlen($buf) > $MAX_STORAGE) fail(413, 'quota', 'Dílna dárce už nemá na video místo.');
+            $meta = ['id' => random_id(12), 'owner' => $g['owner'], 'name' => 'reakce', 'size' => strlen($buf), 'type' => $type, 'createdAt' => now_iso()];
+            file_put_contents("$FILES/{$meta['id']}.pdf", $buf);
+            write_atomic("$FILES/{$meta['id']}.json", json_encode($meta, JSON_UNESCAPED_UNICODE));
+            $fresh = get_gift($g['code']) ?: $g;
+            $fresh['reaction'] = [
+                'file' => ['id' => $meta['id'], 'name' => $meta['name'], 'size' => $meta['size'], 'type' => $type],
+                'at' => now_iso(), 'duration' => media_seconds($_SERVER['HTTP_X_MEDIA_DURATION'] ?? 0, REACTION_SECONDS),
+            ];
+            put_gift($fresh);
+            if ($old) delete_file($old['id']);
+            adjust_usage($g['owner'], strlen($buf) - (int) ($old['size'] ?? 0));
+            push_all('w:' . $g['owner'], ['title' => 'Přišlo video z rozbalování 🎬', 'body' => 'Obdarovaný ti poslal, jak rozbaluje „' . ($g['title'] ?: 'Dárek') . '“.', 'url' => 'dilna', 'tag' => 'reaction-' . $g['code']]);
+            send_json(['ok' => true], 201);
         }
         if (count($seg) === 5 && $seg[2] === 'items' && $seg[4] === 'file' && $method === 'GET') {
             if (!$isOwner()) {
@@ -1073,15 +1160,18 @@ try {
                 if (strlen($buf) > $MAX_UPLOAD) fail(413, 'too_large', "Soubor je větší než $mb MB.");
                 if ($buf === '') fail(413, 'too_large', "Soubor se nepodařilo přijmout. Zkontroluj post_max_size v PHP (limit aplikace je $mb MB).");
                 $type = sniff_type($buf);
-                if (!$type) fail(415, 'bad_type', 'Nahrát jde PDF poukaz nebo fotka (JPEG, PNG, WebP).');
+                if ($type && (strpos($type, 'media/') === 0 || strpos($type, 'audio/') === 0)) $type = media_type($type, $_SERVER['HTTP_X_MEDIA_KIND'] ?? null);
+                if (!$type) fail(415, 'bad_type', 'Nahrát jde PDF poukaz, fotka (JPEG, PNG, WebP) nebo zvuková či video zpráva.');
+                $media = (bool) preg_match('#^(audio|video)/#', $type);
                 if ((int) ($w['usedBytes'] ?? 0) + strlen($buf) > $MAX_STORAGE) {
                     fail(413, 'quota', 'Dílna má místo na ' . $MB($MAX_STORAGE) . ' MB souborů a je plná. Smaž nepotřebné poukazy nebo fotky.');
                 }
-                $fallback = $type === 'application/pdf' ? 'poukaz.pdf' : 'fotka';
+                $fallback = $type === 'application/pdf' ? 'poukaz.pdf' : ($media ? 'vzkaz' : 'fotka');
                 $name = rawurldecode((string) ($_SERVER['HTTP_X_FILE_NAME'] ?? $fallback));
                 $name = mb_substr((string) preg_replace('#[\\\\/\r\n]#', '_', $name), 0, 120, 'UTF-8') ?: $fallback;
                 $meta = ['id' => random_id(12), 'owner' => $w['id'], 'name' => $name, 'size' => strlen($buf), 'type' => $type, 'createdAt' => now_iso()];
-                if ($type !== 'application/pdf') {
+                if ($media) $meta['duration'] = media_seconds($_SERVER['HTTP_X_MEDIA_DURATION'] ?? 0, CLIP_SECONDS);
+                elseif ($type !== 'application/pdf') {
                     $dim = function ($v) { $n = (int) round((float) $v); return $n > 0 && $n < 20000 ? $n : null; };
                     $meta['w'] = $dim($_SERVER['HTTP_X_IMAGE_WIDTH'] ?? 0);
                     $meta['h'] = $dim($_SERVER['HTTP_X_IMAGE_HEIGHT'] ?? 0);
@@ -1089,11 +1179,12 @@ try {
                 file_put_contents("$FILES/{$meta['id']}.pdf", $buf);
                 write_atomic("$FILES/{$meta['id']}.json", json_encode($meta, JSON_UNESCAPED_UNICODE));
                 adjust_usage($w['id'], strlen($buf));
-                send_json(['id' => $meta['id'], 'name' => $meta['name'], 'size' => $meta['size'], 'type' => $type, 'w' => $meta['w'] ?? null, 'h' => $meta['h'] ?? null], 201);
+                send_json(['id' => $meta['id'], 'name' => $meta['name'], 'size' => $meta['size'], 'type' => $type, 'w' => $meta['w'] ?? null, 'h' => $meta['h'] ?? null, 'duration' => $meta['duration'] ?? null], 201);
             }
             if (count($seg) === 3 && $method === 'GET') {
                 $m = file_meta($seg[2]);
                 if (!$m || ($m['owner'] ?? null) !== $w['id']) fail(404, 'not_found', 'Soubor nenalezen.');
+                if (is_media($m)) send_media($m, 'Vzkaz');
                 if (file_type($m) !== 'application/pdf') send_image($m);
                 send_pdf($m['id'], $m['name'], false);
             }
@@ -1168,6 +1259,8 @@ try {
                     'theme' => array_key_exists('theme', $b) ? theme_of($b['theme']) : $g['theme'],
                     'items' => $items,
                     'photo' => array_key_exists('photo', $b) ? sanitize_photo($b['photo'], $g['photo'], $w['id']) : $g['photo'],
+                    'clip' => array_key_exists('clip', $b) ? sanitize_clip($b['clip'], $g['clip'], $w['id']) : $g['clip'],
+                    'askReaction' => array_key_exists('askReaction', $b) ? !empty($b['askReaction']) : $g['askReaction'],
                     'updatedAt' => now_iso(),
                 ]);
                 if (array_key_exists('password', $b)) {
@@ -1205,13 +1298,26 @@ try {
             }
 
             // a copy of the saved box under a new code (shares the files; stats, schedule and recipient start fresh)
+            if (count($seg) === 4 && $seg[3] === 'reaction' && $method === 'GET') {
+                send_media(!empty($g['reaction']['file']['id']) ? file_meta($g['reaction']['file']['id']) : null, 'Video');
+            }
+            if (count($seg) === 4 && $seg[3] === 'reaction' && $method === 'DELETE') {
+                if (!empty($g['reaction']['file'])) {
+                    $old = $g['reaction']['file'];
+                    $g['reaction'] = null;
+                    put_gift($g);
+                    delete_file($old['id']);
+                    adjust_usage($w['id'], -(int) ($old['size'] ?? 0));
+                }
+                send_json(admin_view($g) + ['stats' => get_stats($g['code'])]);
+            }
             if (count($seg) === 4 && $seg[3] === 'duplicate' && $method === 'POST') {
                 if (count(gifts_by_owner($w['id'])) >= $MAX_GIFTS) fail(409, 'limit', "V jedné dílně může být nejvýš $MAX_GIFTS boxů.");
                 $now = now_iso();
                 $copy = array_merge($g, [
                     'code' => unique_code(),
                     'title' => mb_substr($g['title'] . ' (kopie)', 0, 120, 'UTF-8'),
-                    'recipientEmail' => '', 'notifiedAt' => null, 'ringAt' => null,
+                    'recipientEmail' => '', 'notifiedAt' => null, 'ringAt' => null, 'reaction' => null,
                     'createdAt' => $now, 'updatedAt' => $now,
                 ]);
                 put_gift($copy);
